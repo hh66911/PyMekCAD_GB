@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.spatial.transform import Rotation
 from numpy.typing import NDArray
 from matplotlib.patches import Arc, Rectangle
 from win32com.client import VARIANT, Dispatch
@@ -55,8 +56,8 @@ class Drawer:
         self.doc.ActiveLayer = ly
 
     def arc(self, center, radius, start_angle, end_angle):
-        start_angle = start_angle / 180 * math.pi
-        end_angle = end_angle / 180 * math.pi
+        start_angle = np.deg2rad(start_angle)
+        end_angle = np.deg2rad(end_angle)
         return self.view.AddArc(aPoint(*center), radius, start_angle, end_angle)
 
     def line(self, pt1, pt2):
@@ -74,13 +75,26 @@ class Drawer:
         )
         return self.view.AddPolyline(aDouble(pt_seq))
 
-    def hatch(self, *objs, hatch_type=HatchType.NORMAL, angle=45):
-        angle = (angle - 45) / 180 * math.pi
+    def hatch(self, *objs, hatch_type=HatchType.NORMAL):
         hatch = self.view.AddHatch(0, hatch_type.value, True)
-        objs = aObjs(objs)
-        print(objs)
-        hatch.AppendOuterLoop(objs)
-        hatch.Rotate(aPoint(0, 0), angle)
+        obj_lists = []
+        for o in objs:
+            if isinstance(o, (list, tuple, set, frozenset)):
+                obj_lists.extend(o)
+            else:
+                obj_lists.append(o)
+        obj_lists = aObjs(obj_lists)
+        hatch.AppendOuterLoop(obj_lists)
+        angle = np.deg2rad(angle - 45)
+        print(list(hatch.Origin))
+        hatch.Rotate(hatch.Origin, angle)
+        # rmat = Rotation.from_euler('zxy', [angle, 0, 0]).as_matrix()
+        # rmat_np = np.zeros((4, 4))
+        # rmat_np[:3, :3] = np.asarray(rmat)
+        # rmat_np[-1, -1] = 1
+        # rmat = rmat_np.tolist()
+        # print(aDouble(rmat))
+        # hatch.TransformBy(aDouble(rmat))
         hatch.Evaluate()
         return hatch
 
