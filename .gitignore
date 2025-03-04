@@ -1,0 +1,6 @@
+*.dwg
+*.docx
+*.pdf
+*.ipynb
+*.bak
+__pycache__
