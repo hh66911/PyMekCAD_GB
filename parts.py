@@ -1,12 +1,11 @@
+from enum import Enum
 import numpy as np
 import matplotlib.pyplot as plt
-import numpy as np
 from scipy.spatial.transform import Rotation
 from numpy.typing import NDArray
 from matplotlib.patches import Arc, Rectangle
 from win32com.client import VARIANT, Dispatch
 from pythoncom import VT_ARRAY, VT_R8, VT_DISPATCH
-from enum import Enum
 import math
 
 
@@ -36,7 +35,7 @@ class LayerType(Enum):
 
 
 class HatchType(Enum):
-    SOLID = 'SOLID',
+    SOLID = 'SOLID'
     NORMAL = 'ANSI31'
 
 
@@ -85,6 +84,24 @@ class Drawer:
         hatch.Evaluate()
         return hatch
 
+    def random_spline(self, pt1, pt2, min_angle=10, max_angle=15):
+        if np.random.rand() < 0.5:
+            random_angle = np.random.randint(min_angle, max_angle)
+        else:
+            random_angle = np.random.randint(-max_angle, -min_angle)
+        theta = np.deg2rad(random_angle)
+        tang = np.asarray(pt2) - np.asarray(pt1)
+        rotation_matrix = np.asarray([
+            [np.cos(theta), -np.sin(theta)],
+            [np.sin(theta), np.cos(theta)]
+        ])
+        startTang = (rotation_matrix @ tang).tolist()
+        endTang = (rotation_matrix @ tang).tolist()
+        startTang = aDouble(startTang + [0])
+        endTang = aDouble(endTang + [0])
+        pts = aDouble((*pt1, 0, *pt2, 0))
+        return self.view.AddSpline(pts, startTang, endTang)
+
 
 class Bearing:
     def __init__(self, code):
@@ -106,24 +123,15 @@ class Gear:
 
 
 get_R = {
-    (0, 3): 0.2,
-    (3, 6): 0.4,
-    (6, 10): 0.6,
-    (10, 18): 0.8,
-    (18, 30): 1.0,
-    (30, 50): 1.6,
-    (50, 80): 2.0,
-    (80, 120): 2.5,
-    (120, 180): 3.0,
-    (180, 250): 4.0,
-    (250, 320): 5.0,
-    (320, 400): 6.0,
-    (400, 500): 8.0,
-    (500, 630): 10,
-    (630, 800): 12,
-    (800, 1000): 16,
-    (1000, 1250): 20,
-    (1250, 1600): 25,
+    (0, 3): 0.2, (3, 6): 0.4,
+    (6, 10): 0.6, (10, 18): 0.8,
+    (18, 30): 1.0, (30, 50): 1.6,
+    (50, 80): 2.0, (80, 120): 2.5,
+    (120, 180): 3.0, (180, 250): 4.0,
+    (250, 320): 5.0, (320, 400): 6.0,
+    (400, 500): 8.0, (500, 630): 10,
+    (630, 800): 12,  (800, 1000): 16,
+    (1000, 1250): 20,  (1250, 1600): 25,
 }
 
 
