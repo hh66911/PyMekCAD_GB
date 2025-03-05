@@ -51,10 +51,8 @@ def aDouble(xyz):
 class DrawedBearing:
     left_border: CDispatch = None
     right_border: CDispatch = None
-    left_ball: CDispatch = None
-    right_ball: CDispatch = None
-    left_inner: CDispatch = None
-    right_inner: CDispatch = None
+    left_inner: list[CDispatch] = None
+    right_inner: list[CDispatch] = None
 
 
 class LayerType(Enum):
@@ -145,14 +143,18 @@ class Drawer:
         return self.view.AddSpline(pts, startTang, endTang)
 
 
-class Path:
+class Path2D:
     def __init__(self, start_pos=np.zeros(2)):
         if not isinstance(start_pos, ndarray):
             start_pos = np.array(start_pos)
-        if len(start_pos) != 4:
-            start_pos.resize(4)
-            start_pos[-1] = 1
         self.points = [start_pos]
+
+    def __repr__(self):
+        return f'Path2D({self.points})'
+
+    def __str__(self):
+        fmt_pts = ' -> '.join([f'({p[0]: .2f}, {p[1]: .2f})' for p in self.points])
+        return f'{fmt_pts}'
 
     def offset(self, x_or_seq, y=None):
         if y is not None:
@@ -164,9 +166,11 @@ class Path:
         self.points.append(self.points[-1] + off)
 
     def draw(self, drawer: Drawer, transform=np.eye(4)):
-        return drawer.polyline(
-            transform @ pt for pt in self.points
-        )
+        points = np.array([
+            np.append(pt, (0, 1)) for pt in self.points
+        ])
+        points = (transform @ points.T).T[:, :3]
+        return drawer.polyline(*points)
 
 
 class Bearing:
@@ -184,8 +188,7 @@ class Bearing:
                     angle = 25
                     code = code[:-2]
                 elif code.endswith('B'):
-                    angle = 40
-                    code = code[:-1]
+                    raise ValueError('不支持B型角接触球轴承')
                 elif code.endswith('C'):
                     angle = 15
                     code = code[:-1]
@@ -201,7 +204,8 @@ class Bearing:
         size_df = pd.read_excel(r"D:\BaiduSyncdisk\球轴承尺寸.xlsx")
         codes = size_df[["a1", 'a2']]
         idx = codes.stack()[codes.stack() == '7000AC']
-        if len(idx > 0):
+        if len(idx) > 1:
+            print(idx)
             raise ValueError('错误的型号，多个值找到')
         idx = idx.index.tolist()[0][0]
         size_data = size_df.loc[idx, :]
@@ -270,19 +274,21 @@ class Bearing:
             objs (list[Dispatch])
         """
         length = (self.da - self.d) / 2
-        path = Path(left_down + np.array((self.c, 0)))
+        path = Path2D(left_down + np.array((self.c, 0)))
         path.offset(length - self.c * 2, 0)
         path.offset(self.c, self.c)
         path.offset(0, self.b - self.c - self.c1)
         path.offset(-self.c1, self.c1)
         path.offset(self.c + self.c1 - length, 0)
-        path.offset(0, self.c + self.c1 - self.b)
+        path.offset(-self.c, -self.c)
+        path.offset(0, self.c * 2 - self.b)
         path.offset(self.c, -self.c)
         return path.draw(drawer, transform)
-    
+
     def _draw_inner(self, drawer: Drawer,
-                     left_down: ndarray,
-                     transform=np.eye(4)):
+                    left_down: ndarray,
+                    simplified: bool = False,
+                    transform=np.eye(4)):
         """
         Draws the inner part of the bearing.
 
@@ -294,9 +300,42 @@ class Bearing:
         Returns:
             objs (list[Dispatch]): List of drawn objects.
         """
-        
+        if not isinstance(left_down, ndarray):
+            left_down = np.array(left_down, dtype=np.floating)
+        length = (self.da - self.d) / 2
+        center = left_down + np.array((length / 2, self.b / 2))
+        if not simplified:
+            # 非简化画法
+            radius = length / 2
+            half_b = self.b / 2
+            xoff = radius * np.cos(np.pi / 6)
+            yoff = radius * np.sin(np.pi / 6)
+            offset = (
+                ((xoff, half_b), (xoff, yoff)),
+                ((-xoff, half_b), (-xoff, yoff)),
+                ((xoff, -half_b), (xoff, -yoff)),
+                (
+                    (xoff, yoff),
+                    (xoff + (half_b - yoff) * np.cos(np.deg2rad(5)), half_b)
+                )
+            )
+            objs = []
+            for start, end in offset:
+                objs.append(drawer.line(
+                    transform @ (center + start),
+                    transform @ (center + end)
+                ))
+            objs.append(drawer.circle(
+                transform @ center, radius
+            ))
+            return objs
+        else:
+            print('简化画法未实现')
+            return None
 
-    def draw(self, drawer, direction, center_pos):
+    def draw(self, drawer: Drawer,
+             direction: ndarray,
+             center_pos: ndarray):
         """
         Draws a part using the specified drawer, direction, and center position.
 
@@ -312,9 +351,11 @@ class Bearing:
         """
         if not isinstance(center_pos, ndarray):
             center_pos = np.array(center_pos, dtype=np.floating)
+        if not isinstance(direction, ndarray):
+            direction = np.array(direction, dtype=np.floating)
 
         # get rotation angle from vector
-        theta = np.arctan2(direction[0], direction[1])
+        theta = np.arctan2(direction[1], direction[0]) - np.pi / 2
         transform_mat = np.asarray([
             [np.cos(theta), -np.sin(theta), 0, center_pos[0]],
             [np.sin(theta), np.cos(theta), 0, center_pos[1]],
@@ -330,12 +371,17 @@ class Bearing:
         # 画右边的部分
         pos = center_pos + np.array((self.d / 2, -self.b / 2))
         res.right_border = self._draw_border(drawer, pos, transform_mat)
-        
-        
+        res.right_inner = self._draw_inner(drawer, pos,
+                                           False, transform_mat)
+
         # 画左边的部分
         transform_mat = mirror_mat @ transform_mat
         pos = center_pos + np.array((-self.d / 2, -self.b / 2))
         res.left_border = self._draw_border(drawer, pos, transform_mat)
+        res.left_inner = self._draw_inner(drawer, pos,
+                                          True, transform_mat)
+
+        return res
 
 
 class Gear:
