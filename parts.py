@@ -2,11 +2,31 @@ from enum import Enum
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation
-from numpy.typing import NDArray
+from numpy import ndarray
 from matplotlib.patches import Arc, Rectangle
-from win32com.client import VARIANT, Dispatch
+from win32com.client import VARIANT, Dispatch, CDispatch
 from pythoncom import VT_ARRAY, VT_R8, VT_DISPATCH
 import math
+import re
+import os
+import glob
+import pandas as pd
+from dataclasses import dataclass
+
+
+def to_xyz(seq):
+    if isinstance(seq, ndarray):
+        seq = seq.tolist()
+    if len(seq) == 2:
+        x, y = seq
+        z = 0
+    elif len(seq) == 4:
+        print(f'遇到可能是齐次变换的坐标：{seq}')
+        seq = seq / seq[3]
+        x, y, z, _ = seq
+    else:
+        x, y, z = seq
+    return x, y, z
 
 
 def aObjs(objs):
@@ -14,18 +34,27 @@ def aObjs(objs):
 
 
 def aPoint(x_or_seq, y=0, z=0):
-    if isinstance(x_or_seq, tuple):
-        if len(x_or_seq) == 2:
-            x, y = x_or_seq
-        else:
-            x, y, z = x_or_seq
+    if isinstance(x_or_seq, (tuple, list, ndarray)):
+        x, y, z = to_xyz(x_or_seq)
     else:
         x = x_or_seq
     return VARIANT(VT_ARRAY | VT_R8, (x, y, z))
 
 
 def aDouble(xyz):
+    if isinstance(xyz, ndarray):
+        xyz = xyz.tolist()
     return VARIANT(VT_ARRAY | VT_R8, xyz)
+
+
+@dataclass
+class DrawedBearing:
+    left_border: CDispatch = None
+    right_border: CDispatch = None
+    left_ball: CDispatch = None
+    right_ball: CDispatch = None
+    left_inner: CDispatch = None
+    right_inner: CDispatch = None
 
 
 class LayerType(Enum):
@@ -57,22 +86,35 @@ class Drawer:
     def arc(self, center, radius, start_angle, end_angle):
         start_angle = np.deg2rad(start_angle)
         end_angle = np.deg2rad(end_angle)
-        return self.view.AddArc(aPoint(*center), radius, start_angle, end_angle)
+        return self.view.AddArc(aPoint(center), radius, start_angle, end_angle)
 
     def line(self, pt1, pt2):
-        return self.view.AddLine(aPoint(*pt1), aPoint(*pt2))
+        return self.view.AddLine(aPoint(pt1), aPoint(pt2))
 
     def circle(self, center, radius):
-        return self.view.AddCircle(aPoint(*center), radius)
+        return self.view.AddCircle(aPoint(center), radius)
 
     def rect(self, pt1, pt2):
-        x1, y1, x2, y2 = pt1 + pt2
-        pt_seq = (
-            *pt1, 0, x2, y1, 0,
-            *pt2, 0, x1, y2, 0,
-            *pt1, 0
-        )
+        x1, y1, z1 = to_xyz(pt1)
+        x2, y2, z2 = to_xyz(pt2)
+        if z1 != z2:
+            raise ValueError('非平面矩形！')
+        pt_seq = sum((
+            (x1, y1, z1), (x2, y1, z1),
+            (x2, y2, z1), (x1, y2, z1),
+            (x1, y1, z1)
+        ), start=())
         return self.view.AddPolyline(aDouble(pt_seq))
+
+    def polyline(self, *pts_list):
+        pts = sum((
+            tuple(pt) if isinstance(pt[0], (tuple, list))
+            else (pt,) for pt in pts_list
+        ), start=())
+        pts = sum((
+            to_xyz(pt) for pt in pts
+        ), start=())
+        return self.view.AddPolyline(aDouble(pts))
 
     def hatch(self, *objs, hatch_type=HatchType.NORMAL):
         hatch = self.view.AddHatch(0, hatch_type.value, True)
@@ -103,10 +145,197 @@ class Drawer:
         return self.view.AddSpline(pts, startTang, endTang)
 
 
+class Path:
+    def __init__(self, start_pos=np.zeros(2)):
+        if not isinstance(start_pos, ndarray):
+            start_pos = np.array(start_pos)
+        if len(start_pos) != 4:
+            start_pos.resize(4)
+            start_pos[-1] = 1
+        self.points = [start_pos]
+
+    def offset(self, x_or_seq, y=None):
+        if y is not None:
+            off = np.array((x_or_seq, y))
+        elif not isinstance(x_or_seq, ndarray):
+            off = np.array(x_or_seq)
+        else:
+            raise ValueError('offset不够')
+        self.points.append(self.points[-1] + off)
+
+    def draw(self, drawer: Drawer, transform=np.eye(4)):
+        return drawer.polyline(
+            transform @ pt for pt in self.points
+        )
+
+
 class Bearing:
     def __init__(self, code):
-        if code[0] != '7' and code[0] != '6':
-            raise ValueError('不支持轴承')
+        self.code = code
+        if code.startswith('16'):
+            code = '0' + code[2:]
+            bearing_type = '6'
+        bearing_type = code[0]
+        code = code[1:]
+        match bearing_type:
+            case '7':
+                name = '角接触球轴承'
+                if code.endswith('AC'):
+                    angle = 25
+                    code = code[:-2]
+                elif code.endswith('B'):
+                    angle = 40
+                    code = code[:-1]
+                elif code.endswith('C'):
+                    angle = 15
+                    code = code[:-1]
+                else:
+                    raise ValueError('角度信息缺失')
+            case '6':
+                name = '深沟球轴承'
+                angle = None
+            case _:
+                raise ValueError('不支持的轴承类型')
+
+        code = '7' + self.code[1:]
+        size_df = pd.read_excel(r"D:\BaiduSyncdisk\球轴承尺寸.xlsx")
+        codes = size_df[["a1", 'a2']]
+        idx = codes.stack()[codes.stack() == '7000AC']
+        if len(idx > 0):
+            raise ValueError('错误的型号，多个值找到')
+        idx = idx.index.tolist()[0][0]
+        size_data = size_df.loc[idx, :]
+        (
+            self.d, self.da,
+            self.b, self.c,
+            self.c1
+        ) = size_data[['d', 'D', 'B', 'c', 'c1']]
+
+        self.name = name
+        self.angle = angle
+
+    @staticmethod
+    def parse_code_size(digits):
+        # 初始化变量
+        A = B = C = D = None
+
+        def get_size(d1, d2):
+            d = int(d1) * 10 + int(d2)
+            if d <= 3:
+                d = [10, 12, 15, 17][d]
+            else:
+                d = d * 5
+            return d
+
+        # 匹配五位数字开头的情况：ABCDD
+        five_digit_pattern = re.match(r'^(\d)(\d)(\d)(\d)$', digits)
+        if five_digit_pattern:
+            A, B, C, D1, D2 = five_digit_pattern.groups()
+            A, B, C = int(A), int(B), int(C)
+            D = get_size(D1, D2)
+        # 匹配四位数开头的情况：ABDD
+        else:
+            four_digit_pattern = re.match(r'^(\d)(\d)(\d)$', digits)
+            if four_digit_pattern:
+                A, C, D1, D2 = four_digit_pattern.groups()
+                A, C = int(A), int(C)
+                B = 0 if C != 0 else 1
+                D = get_size(D1, D2)
+            # 匹配三位数开头并跟随一个斜杠和数值的情况：ABC/D
+            else:
+                three_digit_with_slash_pattern = re.match(
+                    r'^(\d)(\d)/([\d.]+)$', digits)
+                if three_digit_with_slash_pattern:
+                    A, B, C, D = three_digit_with_slash_pattern.groups()
+                    A, B, C = int(A), int(B), int(C)
+                    D = float(D)
+
+        # 返回结果
+        return A, B, C, D
+
+    def _draw_border(self, drawer: Drawer,
+                     left_down: ndarray,
+                     transform=np.eye(4)):
+        """
+        Draws bearing border with chamfers.
+        Default model coordinate is defined as direction='UP';
+        origin is left down point of the right rectangle boarder
+
+        Params:
+            drawer (object): The drawing tool or context to use for rendering the part.
+            left_down (ndarray): The (x, y) coordinates for the left down point of the rect border.
+            transform (ndarray): transform matrix
+
+        Returns:
+            objs (list[Dispatch])
+        """
+        length = (self.da - self.d) / 2
+        path = Path(left_down + np.array((self.c, 0)))
+        path.offset(length - self.c * 2, 0)
+        path.offset(self.c, self.c)
+        path.offset(0, self.b - self.c - self.c1)
+        path.offset(-self.c1, self.c1)
+        path.offset(self.c + self.c1 - length, 0)
+        path.offset(0, self.c + self.c1 - self.b)
+        path.offset(self.c, -self.c)
+        return path.draw(drawer, transform)
+    
+    def _draw_inner(self, drawer: Drawer,
+                     left_down: ndarray,
+                     transform=np.eye(4)):
+        """
+        Draws the inner part of the bearing.
+
+        Params:
+            drawer (Drawer): The drawing tool or context to use for rendering the part.
+            left_down (ndarray): The (x, y) coordinates for the left down point of the border.
+            transform (ndarray): Transform matrix.
+
+        Returns:
+            objs (list[Dispatch]): List of drawn objects.
+        """
+        
+
+    def draw(self, drawer, direction, center_pos):
+        """
+        Draws a part using the specified drawer, direction, and center position.
+
+        Params:
+            drawer (object): The drawing tool or context to use for rendering the part.
+            direction (tuple): The direction vector in which to draw the part.
+            for angular-contact bearings the direction is of its axial direction force;
+            for deep grove ball bearings the direction is either of the two directions along the shaft.
+            center_pos (tuple): The (x, y) coordinates for the center position of the part.
+
+        Returns:
+            objs (list[Dispatch])
+        """
+        if not isinstance(center_pos, ndarray):
+            center_pos = np.array(center_pos, dtype=np.floating)
+
+        # get rotation angle from vector
+        theta = np.arctan2(direction[0], direction[1])
+        transform_mat = np.asarray([
+            [np.cos(theta), -np.sin(theta), 0, center_pos[0]],
+            [np.sin(theta), np.cos(theta), 0, center_pos[1]],
+            [0, 0, 1, 0], [0, 0, 0, 1]
+        ])  # 齐次变换
+        mirror_mat = np.array([
+            [-1, 0, 0, 0], [0, 1, 0, 0],
+            [0, 0, 1, 0], [0, 0, 0, 1],
+        ])
+
+        res = DrawedBearing()
+
+        # 画右边的部分
+        pos = center_pos + np.array((self.d / 2, -self.b / 2))
+        res.right_border = self._draw_border(drawer, pos, transform_mat)
+        
+        
+        # 画左边的部分
+        transform_mat = mirror_mat @ transform_mat
+        pos = center_pos + np.array((-self.d / 2, -self.b / 2))
+        res.left_border = self._draw_border(drawer, pos, transform_mat)
 
 
 class Gear:
@@ -174,23 +403,6 @@ class Shaft:
 
     def add_gear(self, position, width, diameter, fr, ft, fa, bend_plane='z'):
         self.gears.append((position, width, diameter))
-
-    def fix_bearing(self, p1, p2, width=0):
-        p1, p2 = p1 + width / 2, p2 + width / 2
-        # 计算轴承 y 平面的力
-        f_sum = sum(map(lambda x: x[1], self.forces['y']))
-        m_sum = sum(map(lambda x: x[0] * x[1], self.forces['y'])) - \
-            sum(map(lambda x: x[1], self.bends['y']))
-        f1y = (m_sum - p2 * f_sum) / (p1 - p2)
-        f2y = f_sum - f1y
-        # 计算轴承 z 平面的力
-        f_sum = sum(map(lambda x: x[1], self.forces['z']))
-        m_sum = sum(map(lambda x: x[0] * x[1], self.forces['z'])) - \
-            sum(map(lambda x: x[1], self.bends['z']))
-        f1z = (m_sum - p2 * f_sum) / (p1 - p2)
-        f2z = f_sum - f1z
-        # 添加轴承力
-        self.bearing_pos = [p1, p2]
 
     def _get_diameter_at(self, pos, events):
         """核心方法：获取指定位置的直径"""
