@@ -5,7 +5,7 @@ from scipy.spatial.transform import Rotation
 from numpy import ndarray
 from matplotlib.patches import Arc, Rectangle
 from win32com.client import VARIANT, Dispatch, CDispatch
-from pythoncom import VT_ARRAY, VT_R8, VT_DISPATCH
+from pythoncom import VT_ARRAY, VT_R8, VT_DISPATCH, com_error
 import math
 import re
 import os
@@ -213,6 +213,33 @@ class Drawer:
             to_xyz(pt) for pt in pts
         ), start=())
         return self.view.AddPolyline(aDouble(pts))
+        
+    def wipeout(self, *pts_list):
+        pts = sum((
+            tuple(pt) if isinstance(pt[0], (tuple, list))
+            else (pt,) for pt in pts_list
+        ), start=())
+        pts_off = self._transformed_points(*pts)
+        pts_off = tuple((to_xyz(pt)[:2] for pt in pts_off))
+        command = 'WIPEOUT ' + ' '.join([
+            f'{x:.10e},{y:.10e}' for x, y in pts_off]) + '  '
+        # print(command)
+        self.doc.SendCommand(command)
+        try:
+            sel = self.doc.SelectionSets.Add('tempset1')
+        except com_error:
+            sel = self.doc.SelectionSets.Item('tempset1').Delete()
+        finally:
+            sel = self.doc.SelectionSets.Add('tempset1')
+        sel.Select(4, # most recently created
+            aPoint(pts_off[0]),
+            aPoint(pts_off[1]))
+        if sel.Count == 0:
+            raise ValueError("Failed to select the any object.")
+        wipeout = sel[0]
+        if wipeout.ObjectName != 'AcDbWipeout':
+            raise ValueError("Selected object is not a wipeout.")
+        return wipeout
 
     def hatch(self, *outer_objs, inner_objs=None,
               hatch_type=HatchType.NORMAL, width=0.5):
@@ -316,6 +343,9 @@ class Path2D:
 
     def draw(self, drawer: Drawer):
         return drawer.polyline(*self.points)
+    
+    def wipeout(self, drawer: Drawer):
+        return drawer.wipeout(*self.points)
 
 
 @dataclass
@@ -325,6 +355,7 @@ class DrawedBearing:
     left_inner: list[CDispatch] = None
     right_inner: list[CDispatch] = None
     hatch_right: CDispatch = None
+    wipeout: CDispatch = None
 
 
 class Bearing:
@@ -562,6 +593,19 @@ class Bearing:
         transform = get_rotmat(center_pos, theta)
 
         res = DrawedBearing()
+        
+        drawer.set_transform(tr=transform)
+        wipe_region = Path2D(center_pos - (self.da / 2 - self.c, self.b / 2))
+        wipe_region.offset(self.da - self.c * 2, 0)
+        wipe_region.offset(self.c, self.c)
+        wipe_region.offset(0, self.b - self.c - self.c1)
+        wipe_region.offset(-self.c1, self.c1)
+        wipe_region.offset(-self.da + self.c1 * 2, 0)
+        wipe_region.offset(-self.c1, -self.c1)
+        wipe_region.offset(0, -self.b + self.c1 + self.c)
+        wipe_region.offset(self.c, -self.c)
+        drawer.switch_layer(LayerType.SOLID)
+        res.wipeout = wipe_region.wipeout(drawer)
 
         (
             res.right_border, res.right_inner,
@@ -580,6 +624,7 @@ class DrawedGear:
     right_hatch: CDispatch = None
     left_axis: CDispatch = None
     right_axis: CDispatch = None
+    wipeout: CDispatch = None
 
 
 class GearRotation(Enum):
@@ -676,6 +721,18 @@ class Gear:
         transform = get_rotmat(center_pos, theta)
 
         res = DrawedGear()
+        
+        wipe = Path2D(center_pos - (self.ra - 1, self.half_bold))
+        wipe.offset(self.ra * 2 - 2, 0)
+        wipe.offset(1, 1)
+        wipe.offset(0, self.half_bold * 2 - 2)
+        wipe.offset(-1, 1)
+        wipe.offset(-self.ra * 2 + 2, 0)
+        wipe.offset(-1, -1)
+        wipe.offset(0, -self.half_bold * 2 + 2)
+        wipe.offset(1, -1)
+        drawer.switch_layer(LayerType.SOLID)
+        res.wipeout = wipe.wipeout(drawer)
 
         drawer.set_transform(tr=transform)
         res.right, res.right_hatch, res.right_axis = self._draw_half(
@@ -738,8 +795,8 @@ class Shaft:
     def add_keyway(self, position, length, width):
         self.keyways.append((position, length, width))
 
-    def add_gear(self, position, width, diameter, fr, ft, fa, bend_plane='z'):
-        self.gears.append((position, width, diameter))
+    def add_gear(self, pos, gear: Gear):
+        self.gears.append((pos, gear))
 
     def _get_diameter_at(self, pos, events):
         """核心方法：获取指定位置的直径"""
