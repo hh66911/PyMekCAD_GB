@@ -53,6 +53,7 @@ class DrawedBearing:
     right_border: CDispatch = None
     left_inner: list[CDispatch] = None
     right_inner: list[CDispatch] = None
+    hatch_right: CDispatch = None
 
 
 class LayerType(Enum):
@@ -114,13 +115,19 @@ class Drawer:
         ), start=())
         return self.view.AddPolyline(aDouble(pts))
 
-    def hatch(self, *objs, hatch_type=HatchType.NORMAL):
+    def hatch(self, *outer_objs, inner_objs=[],
+              hatch_type=HatchType.NORMAL):
         hatch = self.view.AddHatch(0, hatch_type.value, True)
-        for o in objs:
+        for o in outer_objs:
             if not isinstance(o, (tuple, list)):
                 hatch.AppendOuterLoop(aObjs((o,)))
             else:
                 hatch.AppendOuterLoop(aObjs(o))
+        for o in inner_objs:
+            if not isinstance(o, (tuple, list)):
+                hatch.AppendInnerLoop(aObjs((o,)))
+            else:
+                hatch.AppendInnerLoop(aObjs(o))
         hatch.Evaluate()
         return hatch
 
@@ -174,19 +181,19 @@ class Path2D:
 
 
 class Bearing:
+    size_df = pd.read_excel(r"D:\BaiduSyncdisk\球轴承尺寸.xlsx")
+
     def __init__(self, code):
         self.code = code
         if code.startswith('16'):
-            code = '0' + code[2:]
             bearing_type = '6'
-        bearing_type = code[0]
-        code = code[1:]
+        else:
+            bearing_type = code[0]
         match bearing_type:
             case '7':
                 name = '角接触球轴承'
                 if code.endswith('AC'):
                     angle = 25
-                    code = code[:-2]
                 elif code.endswith('B'):
                     raise ValueError('不支持B型角接触球轴承')
                 elif code.endswith('C'):
@@ -201,14 +208,14 @@ class Bearing:
                 raise ValueError('不支持的轴承类型')
 
         code = '7' + self.code[1:]
-        size_df = pd.read_excel(r"D:\BaiduSyncdisk\球轴承尺寸.xlsx")
-        codes = size_df[["a1", 'a2']]
-        idx = codes.stack()[codes.stack() == '7000AC']
+        codes = Bearing.size_df[["a1", 'a2']]
+        idx = codes.stack()[codes.stack() == code]
+        idx = list(set(i[0] for i in idx.index))
         if len(idx) > 1:
-            print(idx)
-            raise ValueError('错误的型号，多个值找到')
-        idx = idx.index.tolist()[0][0]
-        size_data = size_df.loc[idx, :]
+            raise ValueError(f'错误的型号，多个值找到：{idx}')
+        elif len(idx) == 0:
+            raise ValueError(f'错误的型号，未找到：{code}')
+        size_data = Bearing.size_df.loc[idx[0], :]
         (
             self.d, self.da,
             self.b, self.c,
@@ -216,7 +223,13 @@ class Bearing:
         ) = size_data[['d', 'D', 'B', 'c', 'c1']]
 
         self.name = name
-        self.angle = angle
+        self.angle = np.deg2rad(angle) if angle is not None else 0
+
+    def __repr__(self):
+        return f'Bearing({self.code})'
+
+    def __str__(self):
+        return f'{self.name} {self.code} {self.d}x{self.da}x{self.b}'
 
     @staticmethod
     def parse_code_size(digits):
@@ -288,7 +301,8 @@ class Bearing:
     def _draw_inner(self, drawer: Drawer,
                     left_down: ndarray,
                     simplified: bool = False,
-                    transform=np.eye(4)):
+                    transform=np.eye(4),
+                    border_objs=None):
         """
         Draws the inner part of the bearing.
 
@@ -306,32 +320,79 @@ class Bearing:
         center = left_down + np.array((length / 2, self.b / 2))
         if not simplified:
             # 非简化画法
-            radius = length / 2
+            radius = length / 4
             half_b = self.b / 2
-            xoff = radius * np.cos(np.pi / 6)
-            yoff = radius * np.sin(np.pi / 6)
+            xoff = radius * np.cos(np.pi / 3)
+            yoff = radius * np.sin(np.pi / 3)
             offset = (
-                ((xoff, half_b), (xoff, yoff)),
-                ((-xoff, half_b), (-xoff, yoff)),
-                ((xoff, -half_b), (xoff, -yoff)),
-                (
-                    (xoff, yoff),
-                    (xoff + (half_b - yoff) * np.cos(np.deg2rad(5)), half_b)
-                )
+                (-xoff, -half_b), (-xoff, -yoff),  # 左下
+                (-xoff, half_b), (-xoff, yoff),  # 左上
+                (xoff, -half_b), (xoff, -yoff),  # 右下
+                (xoff, yoff),  # 右上
+                (xoff + (half_b - yoff) * np.sin(np.deg2rad(33)), half_b)
             )
+            points = np.array(tuple(
+                pt + (0, 1) for pt in offset
+            )) + np.append(center, (0, 0))
+            points = (transform @ points.T).T[:, :3].reshape(-1, 2, 3)
             objs = []
-            for start, end in offset:
-                objs.append(drawer.line(
-                    transform @ (center + start),
-                    transform @ (center + end)
-                ))
-            objs.append(drawer.circle(
-                transform @ center, radius
-            ))
-            return objs
+            for start, end in points:
+                objs.append(drawer.line(start, end))
+            center = (transform @ np.append(center, (0, 1)))[:3]
+            objs.append(drawer.circle(center, radius))
+            if border_objs is not None:
+                aux_arc1 = drawer.arc(center, radius, -60, 60)
+                aux_arc2 = drawer.arc(center, radius, 120, 240)
+                aux_line1 = drawer.line(points[0][0], points[2][0])
+                aux_line2 = drawer.line(points[1][0], points[3][1])
+                ht = drawer.hatch(border_objs, inner_objs=[[
+                    *objs[:-1], aux_arc1,  aux_arc2, aux_line1, aux_line2
+                ]])
+                for obj in (aux_arc1, aux_arc2, aux_line1, aux_line2):
+                    obj.Delete()
+            else:
+                ht = None
+            return objs, ht
         else:
-            print('简化画法未实现')
-            return None
+            angle_vec = np.array((
+                np.sin(self.angle) * length / 3,
+                np.cos(self.angle) * length / 3
+            ))
+            vert_angle = self.angle + np.pi / 2
+            vert_vec = np.array((
+                np.sin(vert_angle) * self.b / 8,
+                np.cos(vert_angle) * self.b / 8
+            ))
+            start = (transform @ np.append(center + angle_vec, (0, 1)))
+            end = (transform @ np.append(center - angle_vec, (0, 1)))
+            objs = [drawer.line(start[:3], end[:3])]
+            start = (transform @ np.append(center + vert_vec, (0, 1)))
+            end = (transform @ np.append(center - vert_vec, (0, 1)))
+            objs.append(drawer.line(start[:3], end[:3]))
+            return objs
+
+    def _draw_side(self, drawer: Drawer,
+                   center_pos: ndarray,
+                   transform: ndarray):
+        mirror_mat = np.array([
+            [-1, 0, 0, 0], [0, 1, 0, 0],
+            [0, 0, 1, 0], [0, 0, 0, 1],
+        ])
+
+        # 画右边的部分
+        pos = center_pos + np.array((self.d / 2, -self.b / 2))
+        rb = self._draw_border(drawer, pos, transform)
+        ri, ht = self._draw_inner(drawer, pos,
+                                  False, transform,
+                                  rb)
+
+        # 画左边的部分
+        transform = mirror_mat @ transform
+        lb = self._draw_border(drawer, pos, transform)
+        li = self._draw_inner(drawer, pos,
+                              True, transform)
+
+        return rb, ri, ht, lb, li
 
     def draw(self, drawer: Drawer,
              direction: ndarray,
@@ -356,30 +417,19 @@ class Bearing:
 
         # get rotation angle from vector
         theta = np.arctan2(direction[1], direction[0]) - np.pi / 2
-        transform_mat = np.asarray([
+        transform = np.asarray([
             [np.cos(theta), -np.sin(theta), 0, center_pos[0]],
             [np.sin(theta), np.cos(theta), 0, center_pos[1]],
             [0, 0, 1, 0], [0, 0, 0, 1]
         ])  # 齐次变换
-        mirror_mat = np.array([
-            [-1, 0, 0, 0], [0, 1, 0, 0],
-            [0, 0, 1, 0], [0, 0, 0, 1],
-        ])
 
         res = DrawedBearing()
 
-        # 画右边的部分
-        pos = center_pos + np.array((self.d / 2, -self.b / 2))
-        res.right_border = self._draw_border(drawer, pos, transform_mat)
-        res.right_inner = self._draw_inner(drawer, pos,
-                                           False, transform_mat)
-
-        # 画左边的部分
-        transform_mat = mirror_mat @ transform_mat
-        pos = center_pos + np.array((-self.d / 2, -self.b / 2))
-        res.left_border = self._draw_border(drawer, pos, transform_mat)
-        res.left_inner = self._draw_inner(drawer, pos,
-                                          True, transform_mat)
+        (
+            res.right_border, res.right_inner,
+            res.hatch_right,
+            res.left_border, res.left_inner
+        ) = self._draw_side(drawer, center_pos, transform)
 
         return res
 
