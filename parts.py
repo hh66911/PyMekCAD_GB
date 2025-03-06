@@ -14,6 +14,44 @@ import pandas as pd
 from dataclasses import dataclass
 
 
+class Angle:
+    def __init__(self, degrees):
+        # 初始化角度值，以度为单位
+        self._degrees = degrees
+
+    def __repr__(self):
+        # 输出时只输出角度值
+        return f'A({self._degrees})'
+
+    def __str__(self):
+        # 字符串表示，输出度分秒
+        degrees = self._degrees
+        deg = int(degrees)
+        minutes = (degrees - deg) * 60
+        min = int(minutes)
+        seconds = (minutes - min) * 60
+        return f"{deg}°{min}'{seconds : <.2f}″"
+
+    def __float__(self):
+        # 数字表示，输出角度值
+        return float(self._degrees)
+
+    def to_radians(self):
+        # 将角度转换为弧度
+        return math.radians(self._degrees)
+
+    def sin(self):
+        # 计算正弦值
+        return math.sin(self.to_radians())
+
+    def cos(self):
+        # 计算余弦值
+        return math.cos(self.to_radians())
+
+    def tan(self):
+        return math.tan(self.to_radians())
+
+
 def to_xyz(seq):
     if isinstance(seq, ndarray):
         seq = seq.tolist()
@@ -45,15 +83,6 @@ def aDouble(xyz):
     if isinstance(xyz, ndarray):
         xyz = xyz.tolist()
     return VARIANT(VT_ARRAY | VT_R8, xyz)
-
-
-@dataclass
-class DrawedBearing:
-    left_border: CDispatch = None
-    right_border: CDispatch = None
-    left_inner: list[CDispatch] = None
-    right_inner: list[CDispatch] = None
-    hatch_right: CDispatch = None
 
 
 class LayerType(Enum):
@@ -131,12 +160,14 @@ class Drawer:
         hatch.Evaluate()
         return hatch
 
-    def random_spline(self, pt1, pt2, min_angle=10, max_angle=15):
+    def random_spline(self, pt1, pt2, min_angle=5, max_angle=10):
         if np.random.rand() < 0.5:
             random_angle = np.random.randint(min_angle, max_angle)
         else:
             random_angle = np.random.randint(-max_angle, -min_angle)
         theta = np.deg2rad(random_angle)
+        if len(pt1) > 2: pt1 = pt1[:2]
+        if len(pt2) > 2: pt2 = pt2[:2]
         tang = np.asarray(pt2) - np.asarray(pt1)
         rotation_matrix = np.asarray([
             [np.cos(theta), -np.sin(theta)],
@@ -148,6 +179,41 @@ class Drawer:
         endTang = aDouble(endTang + [0])
         pts = aDouble((*pt1, 0, *pt2, 0))
         return self.view.AddSpline(pts, startTang, endTang)
+
+
+def get_rotmat(translate: tuple, theta: float):
+    return np.asarray([
+        [np.cos(theta), -np.sin(theta), 0, translate[0]],
+        [np.sin(theta), np.cos(theta), 0, translate[1]],
+        [0, 0, 1, 0], [0, 0, 0, 1]
+    ])  # 齐次变换
+
+
+def get_mirrormat(axis: str):
+    match axis:
+        case 'x':
+            return np.asarray([
+                [1, 0, 0, 0],
+                [0, -1, 0, 0],
+                [0, 0, 1, 0],
+                [0, 0, 0, 1]
+            ])
+        case 'y':
+            return np.asarray([
+                [-1, 0, 0, 0],
+                [0, 1, 0, 0],
+                [0, 0, 1, 0],
+                [0, 0, 0, 1]
+            ])
+        case 'o':
+            return np.asarray([
+                [-1, 0, 0, 0],
+                [0, -1, 0, 0],
+                [0, 0, 1, 0],
+                [0, 0, 0, 1]
+            ])
+        case _:
+            raise ValueError(f'Unsupported axis: {axis}')
 
 
 class Path2D:
@@ -178,6 +244,15 @@ class Path2D:
         ])
         points = (transform @ points.T).T[:, :3]
         return drawer.polyline(*points)
+
+
+@dataclass
+class DrawedBearing:
+    left_border: CDispatch = None
+    right_border: CDispatch = None
+    left_inner: list[CDispatch] = None
+    right_inner: list[CDispatch] = None
+    hatch_right: CDispatch = None
 
 
 class Bearing:
@@ -374,10 +449,7 @@ class Bearing:
     def _draw_side(self, drawer: Drawer,
                    center_pos: ndarray,
                    transform: ndarray):
-        mirror_mat = np.array([
-            [-1, 0, 0, 0], [0, 1, 0, 0],
-            [0, 0, 1, 0], [0, 0, 0, 1],
-        ])
+        mirror_mat = get_mirrormat('y')
 
         # 画右边的部分
         pos = center_pos + np.array((self.d / 2, -self.b / 2))
@@ -417,11 +489,7 @@ class Bearing:
 
         # get rotation angle from vector
         theta = np.arctan2(direction[1], direction[0]) - np.pi / 2
-        transform = np.asarray([
-            [np.cos(theta), -np.sin(theta), 0, center_pos[0]],
-            [np.sin(theta), np.cos(theta), 0, center_pos[1]],
-            [0, 0, 1, 0], [0, 0, 0, 1]
-        ])  # 齐次变换
+        transform = get_rotmat(center_pos, theta)
 
         res = DrawedBearing()
 
@@ -434,17 +502,112 @@ class Bearing:
         return res
 
 
-class Gear:
-    def __init__(self, module, teeth_v, bold):
-        self.diameter = teeth_v * module
-        pitch_radius = module * teeth_v / 2
-        self.d = pitch_radius
-        self.df = pitch_radius + module      # 齿顶圆
-        self.da = pitch_radius - 1.25*module  # 齿根圆
-        self.bold = bold
+@dataclass
+class DrawedGear:
+    right: list[CDispatch] = None
+    left: list[CDispatch] = None
+    left_hatch: CDispatch = None
+    right_hatch: CDispatch = None
+    left_axis: CDispatch = None
+    right_axis: CDispatch = None
 
-    def draw(self, drawer):
-        pass
+
+class GearRotation(Enum):
+    CLOCKWISE = 1
+    COUTER_CLOCKWISE = 2
+    NONE = 3
+
+
+class Gear:
+    def __init__(self, module, teeth, bold, d_hole,
+                 rot_dir=GearRotation.NONE,
+                 beta: Angle = Angle(0)):
+        teeth_v = teeth / (beta.cos()**3)
+        self.diameter = teeth_v * module
+        pitch_diameter = module * teeth_v
+        self.r = pitch_diameter / 2
+        self.ra = pitch_diameter / 2 + module
+        self.rf = pitch_diameter / 2 - 1.25 * module
+        self.half_bold = bold / 2
+        self.r_hole = d_hole / 2
+        self.angle = beta.to_radians()
+        self.rotation = rot_dir
+
+    def _draw_half(self, drawer: Drawer,
+                   transform: ndarray,
+                   mirrored=False):
+        if mirrored:
+            transform = get_mirrormat('y') @ transform
+
+        bold = self.half_bold * 2
+
+        path = Path2D((self.ra - 1, self.half_bold))
+        path.offset(1, -1)
+        path.offset(0, 2 - bold)
+        path.offset(-1, -1)
+        path.offset(0, bold)
+        path.offset(1 - self.ra + self.r_hole, 0)
+        path.offset(0, -bold)
+        path.offset(self.ra - 1 - self.r_hole, 0)
+        objs = [path.draw(drawer, transform)]
+        pt1 = transform @ (self.rf, self.half_bold, 0, 1)
+        pt2 = transform @ (self.rf, -self.half_bold, 0, 1)
+        objs.append(drawer.line(pt1[:3], pt2[:3]))
+
+        if self.rotation == GearRotation.NONE or mirrored:
+            pt1 = transform @ (self.r_hole, self.half_bold, 0, 1)
+            aux_rect = drawer.rect(pt1[:3], pt2[:3])
+            hatch = drawer.hatch(aux_rect)
+            aux_rect.Delete()
+        else:
+            width = (self.ra - self.r_hole) / 4
+            pt1 = transform @ (self.rf - width, self.half_bold, 0, 1)
+            pt2 = transform @ (self.rf - width, -self.half_bold, 0, 1)
+            spl = drawer.random_spline(pt1[:3], pt2[:3])
+            aux_pts = [pt1, transform @ (self.r_hole, self.half_bold, 0, 1),
+                       transform @ (self.r_hole, -self.half_bold, 0, 1), pt2]
+            aux_polyline = drawer.polyline(*(pt[:3] for pt in aux_pts))
+            hatch = drawer.hatch([spl, aux_polyline])
+            a1, a2 = width * 1 / 6, width * 1 / 6
+            xc = self.rf - width / 2
+            match self.rotation:
+                case GearRotation.COUTER_CLOCKWISE:
+                    pt1 = transform @ (xc + a1 / 2 + a2, -self.half_bold, 0, 1)
+                    pt2 = transform @ (xc + a1 / 2 - a2, self.half_bold, 0, 1)
+                    objs.append(drawer.line(pt1[:3], pt2[:3]))
+                    pt1 = transform @ (xc - a1 / 2 + a2, -self.half_bold, 0, 1)
+                    pt2 = transform @ (xc - a1 / 2 - a2, self.half_bold, 0, 1)
+                    objs.append(drawer.line(pt1[:3], pt2[:3]))
+                case GearRotation.CLOCKWISE:
+                    pt1 = transform @ (xc + a1 / 2 + a2, self.half_bold, 0, 1)
+                    pt2 = transform @ (xc + a1 / 2 - a2, -self.half_bold, 0, 1)
+                    objs.append(drawer.line(pt1[:3], pt2[:3]))
+                    pt1 = transform @ (xc - a1 / 2 + a2, self.half_bold, 0, 1)
+                    pt2 = transform @ (xc - a1 / 2 - a2, -self.half_bold, 0, 1)
+                    objs.append(drawer.line(pt1[:3], pt2[:3]))
+
+        return objs, hatch
+
+    def draw(self, drawer: Drawer,
+             dir_vec: ndarray,
+             center_pos: ndarray):
+        if not isinstance(center_pos, ndarray):
+            center_pos = np.array(center_pos, dtype=np.floating)
+        if not isinstance(dir_vec, ndarray):
+            dir_vec = np.array(dir_vec, dtype=np.floating)
+
+        # get rotation angle from vector
+        theta = np.arctan2(dir_vec[1], dir_vec[0]) - np.pi / 2
+        transform = get_rotmat(center_pos, theta)
+
+        res = DrawedGear()
+
+        res.right, res.right_hatch = self._draw_half(
+            drawer, transform, False)
+        res.left, res.left_hatch = self._draw_half(
+            drawer, transform, True)
+
+        return res
 
 
 get_R = {
