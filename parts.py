@@ -459,19 +459,13 @@ class KeywayType(Enum):
 
 class Keyway:
     SIZE_LOOKUP_TABLE = [
-        (6, 8), (8, 10),
-        (10, 12), (12, 17),
-        (17, 22), (22, 30),
-        (30, 38), (38, 44),
-        (44, 50), (50, 58),
-        (58, 65), (65, 75),
-        (75, 85), (85, 95),
-        (95, 110), (110, 130),
-        (130, 150), (150, 170),
-        (170, 200), (200, 230),
-        (230, 260), (260, 290),
-        (290, 330), (330, 380),
-        (380, 440), (440, 500)
+        (6, 8), (8, 10), (10, 12), (12, 17),
+        (17, 22), (22, 30), (30, 38), (38, 44),
+        (44, 50), (50, 58), (58, 65), (65, 75),
+        (75, 85), (85, 95), (95, 110), (110, 130),
+        (130, 150), (150, 170), (170, 200),
+        (200, 230), (230, 260), (260, 290),
+        (290, 330), (330, 380), (380, 440), (440, 500)
     ]
     BOLD_TABLE = [2, 3, 4, 5, 6, 8, 10, 12, 14, 16,
                   18, 20, 22, 25, 28, 32, 36, 40, 45,
@@ -491,6 +485,10 @@ class Keyway:
     def __init__(self, length, diameter, ktype=KeywayType.A):
         self.length = length
         self.r = diameter / 2
+        
+        if length > diameter * 1.6:
+            raise ValueError("Length exceeds the maximum allowable length for the given diameter.")
+        
         for idx, (min_d, max_d) in enumerate(Keyway.SIZE_LOOKUP_TABLE):
             if min_d <= diameter < max_d:
                 self.width = Keyway.BOLD_TABLE[idx]
@@ -574,15 +572,15 @@ class Shaft:
 
     def __init__(self, init_diam):
         self.initial_diameter = init_diam
-        self.steps = []          # [(位置, 直径)]
+        self.steps = []          # [(位置, 值, 是否绝对直径)]
         self.shoulders = []      # [(位置, 高度, 宽度)]
-        self.keyways = []        # [(位置, 长度, 宽度)]
-        self.gears = []          # [(位置, 宽度, 直径)]
 
-        self.contour = []        # 原始轮廓
+        self.contour = []            # 原始轮廓
         self.chamfered_contour = []  # 倒角处理后的轮廓
 
-        self.bearings = []
+        self.gears = []           # [(位置, Object)]
+        self.keyways  = []        # [(位置, Object)]
+        self.bearings = []        # [(位置, Object)]
 
     def _get_chamfer_radius(self, diameter):
         for k, v in Shaft.CR_TABLE.items():
@@ -594,14 +592,17 @@ class Shaft:
     def add_bearing(self, position, bearing: Bearing):
         self.bearings.append((position, bearing))
 
-    def add_step(self, position, h):
-        self.steps.append((position, h))
+    def add_step(self, position, height=None, diameter=None):
+        if height is not None:
+            self.steps.append((position, height, False))
+        elif diameter is not None:
+            self.steps.append((position, diameter, True))
 
     def add_shoulder(self, position, height, width):
         self.shoulders.append((position, height, width))
 
-    def add_keyway(self, position, length, width):
-        self.keyways.append((position, length, width))
+    def add_keyway(self, position, keyway: Keyway):
+        self.keyways.append((position, keyway))
 
     def add_gear(self, pos, gear: Gear):
         self.gears.append((pos, gear))
