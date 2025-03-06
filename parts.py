@@ -1,16 +1,17 @@
 from enum import Enum
-import numpy as np
-import matplotlib.pyplot as plt
-from numpy import ndarray
-from matplotlib.patches import Arc, Rectangle
-from win32com.client import CDispatch
 import math
 import re
 import pandas as pd
 from dataclasses import dataclass
 
+import numpy as np
+import matplotlib.pyplot as plt
+from numpy import ndarray
+from matplotlib.patches import Arc, Rectangle
+from win32com.client import CDispatch
+
 from drawer import (
-    Drawer, Path2D, LayerType, HatchType,
+    Drawer, Path2D, LayerType,
     get_mirrormat, get_rotmat
 )
 
@@ -51,6 +52,7 @@ class Angle:
 
     def tan(self):
         return math.tan(self.to_radians())
+
 
 @dataclass
 class DrawedBearing:
@@ -449,49 +451,151 @@ class Gear:
         return res
 
 
-get_R = {
-    (0, 3): 0.2, (3, 6): 0.4,
-    (6, 10): 0.6, (10, 18): 0.8,
-    (18, 30): 1.0, (30, 50): 1.6,
-    (50, 80): 2.0, (80, 120): 2.5,
-    (120, 180): 3.0, (180, 250): 4.0,
-    (250, 320): 5.0, (320, 400): 6.0,
-    (400, 500): 8.0, (500, 630): 10,
-    (630, 800): 12,  (800, 1000): 16,
-    (1000, 1250): 20,  (1250, 1600): 25,
-}
+class KeywayType(Enum):
+    A = 'A'  # 半圆键
+    B = 'B'  # 方键
+    C = 'C'  # 单半圆键
+
+
+class Keyway:
+    SIZE_LOOKUP_TABLE = [
+        (6, 8), (8, 10),
+        (10, 12), (12, 17),
+        (17, 22), (22, 30),
+        (30, 38), (38, 44),
+        (44, 50), (50, 58),
+        (58, 65), (65, 75),
+        (75, 85), (85, 95),
+        (95, 110), (110, 130),
+        (130, 150), (150, 170),
+        (170, 200), (200, 230),
+        (230, 260), (260, 290),
+        (290, 330), (330, 380),
+        (380, 440), (440, 500)
+    ]
+    BOLD_TABLE = [2, 3, 4, 5, 6, 8, 10, 12, 14, 16,
+                  18, 20, 22, 25, 28, 32, 36, 40, 45,
+                  50, 56, 63, 70, 80, 90, 100]
+    HEIGHT_TABLE = [2, 3, 4, 5, 6, 7, 8, 8, 9, 10,
+                    11, 12, 14, 14, 16, 18, 20, 22,
+                    25, 28, 32, 32, 36, 40, 45, 50]
+    T_SHAFT_TABLE = [
+        1.2, 1.8, 2.5, 3.0, 3.5, 4.0, 5.0, 5.0, 5.5, 6.0, 7.0, 7.5, 9.0, 9.0, 10.0,
+        11.0, 12.0, 13.0, 15.0, 17.0, 20.0, 20.0, 22.0, 25.0, 28.0, 31.0
+    ]
+    T_HUB_TABLE = [
+        1.0, 1.4, 1.8, 2.3, 2.8, 3.3, 3.3, 3.3, 3.8, 4.3, 4.4, 4.9, 5.4, 5.4, 6.4,
+        7.4, 8.4, 9.4, 10.4, 11.4, 12.4, 12.4, 14.4, 15.4, 17.4, 19.5
+    ]
+
+    def __init__(self, length, diameter, ktype=KeywayType.A):
+        self.length = length
+        self.r = diameter / 2
+        for idx, (min_d, max_d) in enumerate(Keyway.SIZE_LOOKUP_TABLE):
+            if min_d <= diameter < max_d:
+                self.width = Keyway.BOLD_TABLE[idx]
+                self.height = Keyway.HEIGHT_TABLE[idx]
+                self.t_shaft = Keyway.T_SHAFT_TABLE[idx]
+                self.t_hub = Keyway.T_HUB_TABLE[idx]
+                break
+        else:
+            raise ValueError(
+                f"Diameter {diameter} is out of range for keyway size lookup.")
+
+        self.type = ktype
+        if ktype in (KeywayType.A, KeywayType.B):
+            self.left_top = np.array((-self.width / 2, self.length / 2))
+            self.right_bottom = -self.left_top
+        elif ktype == KeywayType.C:
+            self.left_top = np.array((
+                -self.width / 2, (self.length - self.width) / 2))
+            self.right_bottom = np.array((self.width / 2, self.length / 2))
+        else:
+            raise ValueError('不支持的键槽类型')
+
+    def draw_on_shaft(self, drawer: Drawer,
+                      center_pos: ndarray,
+                      direction: ndarray):
+        theta = np.arctan2(direction[1], direction[0]) - np.pi / 2
+        drawer.set_transform(center_pos, theta)
+        drawer.switch_layer(LayerType.SOLID)
+        drawer.wipeout_rect(self.left_top, self.right_bottom)
+
+        match self.type:
+            case KeywayType.A:
+                y_off = (self.length - self.width) / 2
+                arc1 = drawer.arc((0, y_off), self.width / 2,
+                                  0, 180)
+                arc2 = drawer.arc((0, -y_off), self.width / 2,
+                                  180, 360)
+                line1 = drawer.line((self.width / 2, y_off),
+                                    (self.width / 2, -y_off))
+                line2 = drawer.line((-self.width / 2, y_off),
+                                    (-self.width / 2, -y_off))
+                return [arc1, arc2, line1, line2]
+            case KeywayType.B:
+                rect = drawer.rect(self.left_top, self.right_bottom)
+                return [rect]
+            case KeywayType.C:
+                arc1 = drawer.arc((0, (self.length - self.width) / 2),
+                                  self.width / 2, 0, 180)
+                path = Path2D(
+                    (-self.width / 2, (self.length - self.width) / 2))
+                path.offset(0, -self.length + self.width / 2)
+                path.offset(self.width, 0)
+                path.offset(0, self.length - self.width / 2)
+                return [arc1, path.draw(drawer)]
+
+    def draw_on_hub(self, drawer: Drawer,
+                    center_pos: ndarray,
+                    direction: ndarray):
+        theta = np.arctan2(direction[1], direction[0]) - np.pi / 2
+        drawer.set_transform(center_pos, theta)
+        drawer.switch_layer(LayerType.SOLID)
+        
+        lt = (self.r, self.length / 2)
+        rb = (self.r + self.t_hub, -self.length / 2)
+        drawer.wipeout_rect(lt, rb)
+        return drawer.rect(lt, rb)
 
 
 class Shaft:
-    def __init__(self, initial_diameter=20.0, length=200.):
-        self.initial_diameter = initial_diameter
-        self.length = length
+    CR_TABLE = {
+        (0, 3): 0.2, (3, 6): 0.4,
+        (6, 10): 0.6, (10, 18): 0.8,
+        (18, 30): 1.0, (30, 50): 1.6,
+        (50, 80): 2.0, (80, 120): 2.5,
+        (120, 180): 3.0, (180, 250): 4.0,
+        (250, 320): 5.0, (320, 400): 6.0,
+        (400, 500): 8.0, (500, 630): 10,
+        (630, 800): 12,  (800, 1000): 16,
+        (1000, 1250): 20,  (1250, 1600): 25,
+    }
+
+    def __init__(self, init_diam):
+        self.initial_diameter = init_diam
         self.steps = []          # [(位置, 直径)]
         self.shoulders = []      # [(位置, 高度, 宽度)]
         self.keyways = []        # [(位置, 长度, 宽度)]
         self.gears = []          # [(位置, 宽度, 直径)]
 
-        self.chamfer_radius = 0  # 圆角半径
-        for k, v in get_R.items():
-            if initial_diameter <= k[1] and initial_diameter > k[0]:
-                self.chamfer_radius = v
-                break
-
         self.contour = []        # 原始轮廓
         self.chamfered_contour = []  # 倒角处理后的轮廓
 
-        self.forces = {'y': [], 'z': []}    # 受力 [位置, 数量]
-        self.bends = {'y': [], 'z': []}    # 受弯矩 [位置, 数量]
-        self.twists = []                    # 受转矩
+        self.bearings = []
 
-        self.bearing_pos = []
-        self.coupling_pos = None
+    def _get_chamfer_radius(self, diameter):
+        for k, v in Shaft.CR_TABLE.items():
+            if k[0] < diameter <= k[1]:
+                return v
+        raise ValueError(
+            f"Diameter {diameter} is out of range for chamfer radius calculation.")
 
-    def add_bearing(self, position, bearing):
-        pass
+    def add_bearing(self, position, bearing: Bearing):
+        self.bearings.append((position, bearing))
 
-    def add_step(self, position, diameter):
-        self.steps.append((position, diameter))
+    def add_step(self, position, h):
+        self.steps.append((position, h))
 
     def add_shoulder(self, position, height, width):
         self.shoulders.append((position, height, width))
@@ -503,7 +607,6 @@ class Shaft:
         self.gears.append((pos, gear))
 
     def _get_diameter_at(self, pos, events):
-        """核心方法：获取指定位置的直径"""
         # 按位置排序事件
         sorted_events = sorted(events, key=lambda x: x[0])
         current_diam = self.initial_diameter

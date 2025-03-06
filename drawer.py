@@ -46,11 +46,11 @@ def to_xyz(seq):
         if not isinstance(seq, ndarray):
             seq = np.array(seq)
         seq = seq / seq[3]
-        return *seq[:3],
+        return (*seq[:3],)
     if length == 3:
-        return *seq,
+        return (*seq,)
     if length == 2:
-        return *seq, 0
+        return (*seq, 0)
     raise ValueError(
         f"Invalid sequence length. Expected 2, 3, or 4 elements. recieved: {seq}")
 
@@ -134,10 +134,14 @@ class Drawer:
         self.view = self.doc.ModelSpace
         self.acad_interface = acad
         self.transform = None
+        
+        print('关闭 WIPEOUT 边框')
+        self.doc.SendCommand('wipeout f off ')
 
     def set_transform(self, tranlation=(0, 0),
                       theta=0., mirrored_y=False, tr=None):
-        if tranlation == (0, 0) and theta == 0. and not mirrored_y and tr is None:
+        if tuple(tranlation) == (0, 0) and\
+            theta == 0. and not mirrored_y and tr is None:
             self.transform = None
             return
         if tr is not None:
@@ -151,23 +155,26 @@ class Drawer:
 
     def _transformed_points(self, *pts):
         if self.transform is None:
-            return *pts,
+            if len(pts) != 1:
+                return (*pts,)
+            return pts[0]
         pts_mat = to_vec(*pts, flatten=True)
         pts = (self.transform @ pts_mat.T).T
         if len(pts) != 1:
-            return *pts,
+            return (*pts,)
         return pts[0]
 
     def zoom_all(self):
         self.doc.Application.ZoomAll()
 
-    def switch_layer(self, layer_type=LayerType.SOLID):
-        ly = self.doc.Layers.Item(layer_type.value)
+    def switch_layer(self, ltype=LayerType.SOLID):
+        ly = self.doc.Layers.Item(ltype.value)
         self.doc.ActiveLayer = ly
 
     def arc(self, center, radius, start_angle, end_angle):
         start_angle = np.deg2rad(start_angle)
         end_angle = np.deg2rad(end_angle)
+        center = self._transformed_points(center)
         return self.view.AddArc(aPoint(center), radius, start_angle, end_angle)
 
     def line(self, pt1, pt2):
@@ -229,6 +236,14 @@ class Drawer:
             raise ValueError("Selected object is not a wipeout.")
         return wipeout
 
+    def wipeout_rect(self, pt1, pt2):
+        x1, y1, z1 = to_xyz(pt1)
+        x2, y2, z2 = to_xyz(pt2)
+        if z1 != z2:
+            raise ValueError('非平面矩形！')
+        pts = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
+        return self.wipeout(*pts)
+
     def hatch(self, *outer_objs, inner_objs=None,
               hatch_type=HatchType.NORMAL, width=0.5):
         hatch = self.view.AddHatch(0, hatch_type.value, True)
@@ -255,10 +270,8 @@ class Drawer:
         else:
             random_angle = np.random.randint(-max_angle, -min_angle)
         theta = np.deg2rad(random_angle)
-        if len(pt1) > 2:
-            pt1 = pt1[:2]
-        if len(pt2) > 2:
-            pt2 = pt2[:2]
+        pt1, pt2 = self._transformed_points(pt1, pt2)
+        pt1, pt2 = pt1[:1], pt2[:2]
         tang = np.asarray(pt2) - np.asarray(pt1)
         rotation_matrix = np.asarray([
             [np.cos(theta), -np.sin(theta)],
