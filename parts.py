@@ -11,8 +11,7 @@ from matplotlib.patches import Arc, Rectangle
 from win32com.client import CDispatch
 
 from drawer import (
-    Drawer, Path2D, LayerType,
-    get_mirrormat, get_rotmat
+    Drawer, Path2D, LayerType
 )
 
 
@@ -254,22 +253,17 @@ class Bearing:
             return objs
 
     def _draw_side(self, drawer: Drawer,
-                   center_pos: ndarray,
-                   transform: ndarray):
-        mirror_mat = get_mirrormat('y')
-
+                   center_pos: ndarray):
         # 画右边的部分
-        drawer.set_transform(tr=transform)
         pos = center_pos + np.array((self.d / 2, -self.b / 2))
         rb = self._draw_border(drawer, pos)
         ri, ht = self._draw_inner(drawer, pos,
                                   False, rb)
 
         # 画左边的部分
-        transform = mirror_mat @ transform
-        drawer.set_transform(tr=transform)
-        lb = self._draw_border(drawer, pos)
-        li = self._draw_inner(drawer, pos, True)
+        with drawer.transformed(mirrored_y=True):
+            lb = self._draw_border(drawer, pos)
+            li = self._draw_inner(drawer, pos, True)
 
         return rb, ri, ht, lb, li
 
@@ -291,35 +285,31 @@ class Bearing:
         """
         if not isinstance(center_pos, ndarray):
             center_pos = np.array(center_pos, dtype=np.floating)
-        if not isinstance(direction, ndarray):
-            direction = np.array(direction, dtype=np.floating)
 
         # get rotation angle from vector
         theta = np.arctan2(direction[1], direction[0]) - np.pi / 2
-        transform = get_rotmat(center_pos, theta)
+        with drawer.transformed(center_pos, theta):
+            res = DrawedBearing()
 
-        res = DrawedBearing()
+            wipe_region = Path2D((-self.da / 2 + self.c, -self.b / 2))
+            wipe_region.offset(self.da - self.c * 2, 0)
+            wipe_region.offset(self.c, self.c)
+            wipe_region.offset(0, self.b - self.c - self.c1)
+            wipe_region.offset(-self.c1, self.c1)
+            wipe_region.offset(-self.da + self.c1 * 2, 0)
+            wipe_region.offset(-self.c1, -self.c1)
+            wipe_region.offset(0, -self.b + self.c1 + self.c)
+            wipe_region.offset(self.c, -self.c)
+            drawer.switch_layer(LayerType.SOLID)
+            res.wipeout = wipe_region.wipeout(drawer)
 
-        drawer.set_transform(tr=transform)
-        wipe_region = Path2D(center_pos - (self.da / 2 - self.c, self.b / 2))
-        wipe_region.offset(self.da - self.c * 2, 0)
-        wipe_region.offset(self.c, self.c)
-        wipe_region.offset(0, self.b - self.c - self.c1)
-        wipe_region.offset(-self.c1, self.c1)
-        wipe_region.offset(-self.da + self.c1 * 2, 0)
-        wipe_region.offset(-self.c1, -self.c1)
-        wipe_region.offset(0, -self.b + self.c1 + self.c)
-        wipe_region.offset(self.c, -self.c)
-        drawer.switch_layer(LayerType.SOLID)
-        res.wipeout = wipe_region.wipeout(drawer)
+            (
+                res.right_border, res.right_inner,
+                res.hatch_right,
+                res.left_border, res.left_inner
+            ) = self._draw_side(drawer, (0, 0))
 
-        (
-            res.right_border, res.right_inner,
-            res.hatch_right,
-            res.left_border, res.left_inner
-        ) = self._draw_side(drawer, center_pos, transform)
-
-        return res
+            return res
 
 
 @dataclass
@@ -419,36 +409,32 @@ class Gear:
              center_pos: ndarray):
         if not isinstance(center_pos, ndarray):
             center_pos = np.array(center_pos, dtype=np.floating)
-        if not isinstance(dir_vec, ndarray):
-            dir_vec = np.array(dir_vec, dtype=np.floating)
 
         # get rotation angle from vector
         theta = np.arctan2(dir_vec[1], dir_vec[0]) - np.pi / 2
-        transform = get_rotmat(center_pos, theta)
+        with drawer.transformed(center_pos, theta):
+            res = DrawedGear()
 
-        res = DrawedGear()
+            wipe = Path2D((-self.ra + 1, -self.half_bold))
+            wipe.offset(self.ra * 2 - 2, 0)
+            wipe.offset(1, 1)
+            wipe.offset(0, self.half_bold * 2 - 2)
+            wipe.offset(-1, 1)
+            wipe.offset(-self.ra * 2 + 2, 0)
+            wipe.offset(-1, -1)
+            wipe.offset(0, -self.half_bold * 2 + 2)
+            wipe.offset(1, -1)
+            drawer.switch_layer(LayerType.SOLID)
+            res.wipeout = wipe.wipeout(drawer)
 
-        wipe = Path2D(center_pos - (self.ra - 1, self.half_bold))
-        wipe.offset(self.ra * 2 - 2, 0)
-        wipe.offset(1, 1)
-        wipe.offset(0, self.half_bold * 2 - 2)
-        wipe.offset(-1, 1)
-        wipe.offset(-self.ra * 2 + 2, 0)
-        wipe.offset(-1, -1)
-        wipe.offset(0, -self.half_bold * 2 + 2)
-        wipe.offset(1, -1)
-        drawer.switch_layer(LayerType.SOLID)
-        res.wipeout = wipe.wipeout(drawer)
-
-        drawer.set_transform(tr=transform)
-        res.right, res.right_hatch, res.right_axis = self._draw_half(
-            drawer, False)
-        transform = get_mirrormat('y') @ transform
-        drawer.set_transform(tr=transform)
-        res.left, res.left_hatch, res.left_axis = self._draw_half(
-            drawer, True)
-
-        return res
+            res.right, res.right_hatch, res.right_axis = self._draw_half(
+                drawer, False)
+            
+            with drawer.transformed(mirrored_y=True):
+                res.left, res.left_hatch, res.left_axis = self._draw_half(
+                    drawer, True)
+            
+            return res
 
 
 class KeywayType(Enum):
@@ -485,10 +471,11 @@ class Keyway:
     def __init__(self, length, diameter, ktype=KeywayType.A):
         self.length = length
         self.r = diameter / 2
-        
+
         if length > diameter * 1.6:
-            raise ValueError("Length exceeds the maximum allowable length for the given diameter.")
-        
+            raise ValueError(
+                "Length exceeds the maximum allowable length for the given diameter.")
+
         for idx, (min_d, max_d) in enumerate(Keyway.SIZE_LOOKUP_TABLE):
             if min_d <= diameter < max_d:
                 self.width = Keyway.BOLD_TABLE[idx]
@@ -501,21 +488,10 @@ class Keyway:
                 f"Diameter {diameter} is out of range for keyway size lookup.")
 
         self.type = ktype
-        if ktype in (KeywayType.A, KeywayType.B):
-            self.left_top = np.array((-self.width / 2, self.length / 2))
-            self.right_bottom = -self.left_top
-        elif ktype == KeywayType.C:
-            self.left_top = np.array((
-                -self.width / 2, (self.length - self.width) / 2))
-            self.right_bottom = np.array((self.width / 2, self.length / 2))
-        else:
-            raise ValueError('不支持的键槽类型')
+        self.left_top = (-self.width / 2, self.length / 2)
+        self.right_bottom = (self.width / 2, -self.length / 2)
 
-    def draw_on_shaft(self, drawer: Drawer,
-                      center_pos: ndarray,
-                      direction: ndarray):
-        theta = np.arctan2(direction[1], direction[0]) - np.pi / 2
-        drawer.set_transform(center_pos, theta)
+    def _draw_on_shaft(self, drawer: Drawer):
         drawer.switch_layer(LayerType.SOLID)
         drawer.wipeout_rect(self.left_top, self.right_bottom)
 
@@ -544,17 +520,33 @@ class Keyway:
                 path.offset(0, self.length - self.width / 2)
                 return [arc1, path.draw(drawer)]
 
-    def draw_on_hub(self, drawer: Drawer,
-                    center_pos: ndarray,
-                    direction: ndarray):
-        theta = np.arctan2(direction[1], direction[0]) - np.pi / 2
-        drawer.set_transform(center_pos, theta)
+    def _draw_on_hub(self, drawer: Drawer):
         drawer.switch_layer(LayerType.SOLID)
-        
+
         lt = (self.r, self.length / 2)
         rb = (self.r + self.t_hub, -self.length / 2)
         drawer.wipeout_rect(lt, rb)
         return drawer.rect(lt, rb)
+
+    def draw(self, drawer: Drawer,
+             center_pos: ndarray,
+             direction: ndarray):
+        theta = np.arctan2(direction[1], direction[0]) - np.pi / 2
+        with drawer.transformed(center_pos, theta):
+            result = (
+                self._draw_on_shaft(drawer),
+                self._draw_on_hub(drawer),
+            )
+            return result
+
+
+@dataclass
+class Fillet:
+    radius: float
+    center: tuple
+    pts: list
+    start_angle: float
+    stop_angle: float
 
 
 class Shaft:
@@ -573,14 +565,13 @@ class Shaft:
     def __init__(self, init_diam):
         self.initial_diameter = init_diam
         self.steps = []          # [(位置, 值, 是否绝对直径)]
-        self.shoulders = []      # [(位置, 高度, 宽度)]
 
         self.contour = []            # 原始轮廓
         self.chamfered_contour = []  # 倒角处理后的轮廓
 
-        self.gears = []           # [(位置, Object)]
-        self.keyways  = []        # [(位置, Object)]
-        self.bearings = []        # [(位置, Object)]
+        self.gears: list[tuple[float, Gear]] = []
+        self.keyways: list[tuple[float, Keyway]] = []
+        self.bearings: list[tuple[float, Bearing]] = []
 
     def _get_chamfer_radius(self, diameter):
         for k, v in Shaft.CR_TABLE.items():
@@ -599,7 +590,8 @@ class Shaft:
             self.steps.append((position, diameter, True))
 
     def add_shoulder(self, position, height, width):
-        self.shoulders.append((position, height, width))
+        self.steps.append((position, height, False))
+        self.steps.append((position + width, -height, False))
 
     def add_keyway(self, position, keyway: Keyway):
         self.keyways.append((position, keyway))
@@ -607,65 +599,32 @@ class Shaft:
     def add_gear(self, pos, gear: Gear):
         self.gears.append((pos, gear))
 
-    def _get_diameter_at(self, pos, events):
-        # 按位置排序事件
-        sorted_events = sorted(events, key=lambda x: x[0])
-        current_diam = self.initial_diameter
-
-        for event_pos, event_diam in sorted_events:
-            if event_pos <= pos:
-                current_diam = event_diam
-            else:
-                break  # 已过目标位置，提前终止
-        return current_diam
-
     def process_features(self):
         events = []
         events.append((0, self.initial_diameter))
 
         # 处理阶梯特征
         current_diam = self.initial_diameter
-        for pos, diam in self.steps:
-            current_diam += diam
-            events.append((pos, current_diam))
-
-        # 转换轴肩特征
-        for pos, height, width in self.shoulders:
-            current_diam = self._get_diameter_at(pos, events)
-            events.append((pos, current_diam + height))
-            events.append((pos + width, current_diam))
-
-        # 合并事件点
-        events.sort(key=lambda x: x[0])
-        merged = []
-        last_pos = -np.inf
-        for pos, diam in events:
-            if pos > last_pos:
-                merged.append((pos, diam))
-                last_pos = pos
+        self.steps.sort(key=lambda x: x[0])
+        for pos, l, absolute in self.steps:
+            if absolute:
+                current_diam = l
             else:
-                merged[-1] = (pos, diam)
+                current_diam += l
+            events.append((pos, current_diam))
 
         # 生成基础轮廓
         self.contour = []
         current_diam = self.initial_diameter
-        current_pos = 0
-        self.contour.append((current_pos, current_diam))
-
-        for pos, diam in merged:
-            if pos <= current_pos:
-                continue
+        self.contour.append((0, current_diam))
+        for pos, diam in events:
             self.contour.extend([(pos, current_diam), (pos, diam)])
             current_diam = diam
-            current_pos = pos
-
-        # 末端延伸
-        self.contour.append((self.length, current_diam))
 
         # 圆角处理
         self._apply_chamfers()
 
-    def _apply_chamfers(self):
+    def _apply_chamfers(self, num_pt_per_arc=5):
         """双圆角处理逻辑"""
         self.chamfered_contour = []
 
@@ -675,156 +634,67 @@ class Shaft:
 
             if x0 == x1:  # 垂直段（直径变化点）
                 # 转换为半径单位进行计算
-                r0 = d0 / 2
-                r1 = d1 / 2
+                r0, r1 = d0 / 2, d1 / 2
                 delta_r = r1 - r0
-                abs_radius = abs(self.chamfer_radius)
+                fradius = self._get_chamfer_radius(min(r0, r1))
 
-                # 内圆角（外侧）
-                outer_cx = x0 + np.sign(delta_r) * abs_radius
-                outer_cy = max(r0, r1) - abs_radius
+                # 内侧
+                cx = x0 - np.sign(delta_r) * fradius
+                cy = min(r0, r1) + fradius
                 if delta_r > 0:
-                    outer_theta = np.linspace(np.pi, np.pi / 2, 20)
+                    start_angle = -np.pi / 2
+                    stop_angle = 0
                 else:
-                    outer_theta = np.linspace(np.pi / 2, 0, 20)
-
-                # 外圆角（内侧）
-                inner_cx = x0 - np.sign(delta_r) * abs_radius
-                inner_cy = min(r0, r1) + abs_radius
-                if delta_r > 0:
-                    inner_theta = np.linspace(-np.pi / 2, 0, 20)
-                else:
-                    inner_theta = np.linspace(-np.pi, -np.pi / 2, 20)
-
-                # 生成外圆角坐标（直径单位）
-                outer_x = outer_cx + abs_radius * np.cos(outer_theta)
-                outer_y = (outer_cy + abs_radius * np.sin(outer_theta)) * 2
+                    start_angle = -np.pi
+                    stop_angle = -np.pi / 2
 
                 # 生成内圆角坐标（直径单位）
-                inner_x = inner_cx + abs_radius * np.cos(inner_theta)
-                inner_y = (inner_cy + abs_radius * np.sin(inner_theta)) * 2
-
-                self.contour[i+1] = (x1 + abs_radius, d1)
+                theta = np.linspace(start_angle, stop_angle, num_pt_per_arc)
+                pts = zip(cx + fradius * np.cos(theta),
+                          cy + fradius * np.sin(theta))
 
                 # 合并并排序坐标点
-                if delta_r > 0:
-                    combined = sorted(zip(inner_x, inner_y),
-                                      key=lambda p: p[0])
-                    combined += sorted(zip(outer_x, outer_y),
-                                       key=lambda p: p[0])
-                else:
-                    combined = sorted(zip(outer_x, outer_y),
-                                      key=lambda p: p[0])
-                    combined += sorted(zip(inner_x, inner_y),
-                                       key=lambda p: p[0])
-                self.chamfered_contour.extend(combined)
+                self.chamfered_contour.append(Fillet(
+                    fradius, (cx, cy), pts,
+                    start_angle, stop_angle,
+                ))
             else:  # 水平段
-                self.chamfered_contour.append((x0, d0))
+                self.chamfered_contour.append((x0, d0 / 2))
 
         # 添加轮廓末端
         self.chamfered_contour.append(self.contour[-1])
 
-    def plot(self, cad):
+    def plot(self, drawer: Drawer,
+             center: ndarray,
+             direction: ndarray):
         if not self.chamfered_contour:
             self.process_features()
 
-        fig, ax = plt.subplots(figsize=(12, 4))
-        ax.set_aspect('equal')
+        theta = np.arctan2(direction[1], direction[0]) - np.pi / 2
+        with drawer.transformed(center, theta):
+            drawer.switch_layer(LayerType.SOLID)
 
-        # 处理倒角轮廓数据
-        x = [p[0] for p in self.chamfered_contour]
-        y = [p[1]/2 for p in self.chamfered_contour]  # 转换为半径
+            # WIPEOUT
+            pts_list = map(lambda x: x if isinstance(x, Fillet)
+                        else [x], self.chamfered_contour)
+            pts_list = sum(pts_list, start=[])
+            pts = pts_list + [(pt[0], -pt[1]) for pt in pts_list]
+            drawer.wipeout(*pts)
 
-        # 绘制轮廓
-        ax.plot(x, y, 'b-', lw=1.2, label='Shaft')
-        ax.plot(x, [-v for v in y], 'b-', lw=1.2)
-        ax.fill_between(x, y, [-v for v in y], color='skyblue', alpha=0.4)
+            for pos, bearing in self.bearings:
+                bearing.draw(drawer, direction, (pos, 0))
 
-        # 绘制受力
-        for pos, val in self.forces['y']:
-            draw_dir = (1 if val < 0 else -1) * self.length / 20
-            ax.arrow(pos, 0, draw_dir, draw_dir, head_width=2,
-                     head_length=4, fc='r', ec='r')
-        for pos, val in self.forces['z']:
-            draw_dir = (1 if val < 0 else -1) * self.length / 20
-            ax.arrow(pos, 0, 0, draw_dir, head_width=2,
-                     head_length=4, fc='r', ec='r')
+            for pos, gear in self.gears:
+                gear.draw(drawer, direction, (pos, 0))
 
-        # 绘制 y 方向的弯矩
-        for pos, val in self.bends['y']:
-            # 生成圆弧的点
-            if val > 0:
-                theta = np.linspace(-np.pi / 2, 0, 100)
-            else:
-                theta = np.linspace(np.pi, np.pi / 2, 100)
-            x = pos + 10 * np.cos(theta)
-            # 为了区分 y 和 z 方向，将 z 方向的曲线在 y 轴上偏移
-            y_offset = -12 if val > 0 else 10
-            y = y_offset + 10 * np.sin(theta) / 2
-            if val > 0:
-                arror_d = (0, 1)
-            else:
-                arror_d = (1, 0)
-            # 根据不同的 z 深度设置不同的颜色透明度，模拟 3D 效果
-            alpha = 0.2 + \
-                (pos / max([p for p, _ in self.bends['y'] + self.bends['z']])) * 0.8
-            ax.plot(x, y, color='r', lw=2, alpha=alpha)
-            arrow_start = (x[-1], y[-1])
-            ax.arrow(arrow_start[0], arrow_start[1], arror_d[0], arror_d[1],
-                     head_width=2, head_length=2, fc='r', ec='r')
+            for segment in self.chamfered_contour:
+                if isinstance(segment, Fillet):
+                    drawer.arc(segment.center, segment.radius,
+                            np.degrees(segment.start_angle),
+                            np.degrees(segment.stop_angle))
+                else:
+                    drawer.line(segment[0], segment[1])
 
-        # 绘制 z 方向的弯矩
-        for pos, val in self.bends['z']:
-            # 生成圆弧的点
-            if val > 0:
-                theta = np.linspace(-np.pi / 2, 0, 100)
-            else:
-                theta = np.linspace(np.pi, np.pi / 2, 100)
-            x = pos + 10 * np.cos(theta)
-            y = 10 * np.sin(theta)
-            if val > 0:
-                arror_d = (0, 1)
-            else:
-                arror_d = (1, 0)
-            # 根据不同的 z 深度设置不同的颜色透明度，模拟 3D 效果
-            alpha = 0.2 + \
-                (pos / max([p for p, _ in self.bends['y'] + self.bends['z']])) * 0.8
-            ax.plot(x, y, color='r', lw=2, alpha=alpha)
-            arrow_start = (x[-1], y[-1])
-            ax.arrow(arrow_start[0], arrow_start[1], arror_d[0], arror_d[1],
-                     head_width=3, head_length=4, fc='r', ec='r')
-
-        # 绘制半圆形键槽
-        for pos, length, width in self.keyways:
-            # 绘制上侧线段
-            ax.plot([pos, pos + length], [width / 2, width / 2], 'r-', lw=2)
-            # 绘制下侧线段
-            ax.plot([pos, pos + length], [-width / 2, -width / 2], 'r-', lw=2)
-
-            # 绘制左侧半圆
-            left_arc = Arc((pos, 0), width, width, theta1=90,
-                           theta2=270, edgecolor='red', lw=2)
-            ax.add_patch(left_arc)
-
-            # 绘制右侧半圆
-            right_arc = Arc((pos + length, 0), width, width,
-                            theta1=-90, theta2=90, edgecolor='red', lw=2)
-            ax.add_patch(right_arc)
-
-        # 绘制齿轮
-        for pos, width, diameter in self.gears:
-            gear = Rectangle((pos, -diameter/2), width,
-                             diameter, fc='orange', alpha=0.5)
-            ax.add_patch(gear)
-
-        # 绘制联轴器
-        if self.coupling_pos is not None:
-            coupling = Rectangle((self.coupling_pos - 5, -self.initial_diameter/2),
-                                 10, self.initial_diameter, fc='green', alpha=0.5)
-            ax.add_patch(coupling)
-
-        plt.title("Improved Shaft Visualization")
-        plt.xlabel("X (mm)")
-        plt.ylabel("Y (mm)")
-        plt.grid(True)
-        return fig
+            for pos, keyway in self.keyways:
+                keyway.draw(
+                    drawer, (pos, 0), direction)

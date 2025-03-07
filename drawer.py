@@ -1,8 +1,9 @@
+from enum import Enum
+import time
 import numpy as np
 from numpy import ndarray
-from win32com.client import VARIANT, Dispatch, CDispatch
+from win32com.client import VARIANT, Dispatch
 from pythoncom import VT_ARRAY, VT_R8, VT_DISPATCH, com_error
-from enum import Enum
 
 
 def get_rotmat(translate: tuple, theta: float):
@@ -48,7 +49,7 @@ def to_xyz(seq):
         seq = seq / seq[3]
         return (*seq[:3],)
     if length == 3:
-        return (*seq,)
+        return seq
     if length == 2:
         return (*seq, 0)
     raise ValueError(
@@ -126,43 +127,115 @@ class HatchType(Enum):
     NORMAL = 'ANSI31'
 
 
+class Transform:
+    def __init__(self, translation=(0, 0),
+                 theta=0.0, mirrored_y=False):
+        tr = get_rotmat(translation, theta)
+        if mirrored_y:
+            mirror_mat = get_mirrormat('y')
+            tr = tr @ mirror_mat
+        self.transform = tr
+        self.translation = translation
+        self.theta = theta
+        self.mirrored_y = mirrored_y
+
+    def __setitem__(self, name, value):
+        if name in ['translation', 'theta', 'mirrored_y']:
+            tr = get_rotmat(self.translation, self.theta)
+            if self.mirrored_y:
+                mirror_mat = get_mirrormat('y')
+                tr = tr @ mirror_mat
+            self.transform = tr
+        else:
+            raise ValueError(f"Invalid attribute name: {name}")
+
+    def clear(self):
+        self.transform = None
+        self.theta = 0
+        self.mirrored_y = False
+        self.translation = (0, 0)
+
+    def __matmul__(self, other: ndarray):
+        if self.transform is None:
+            return other
+        return self.transform @ other
+
+    def apply_angle(self, angle: float):
+        if self.transform is None:
+            return angle
+        if self.mirrored_y:
+            angle = -angle
+        return angle + self.theta
+
+    def apply(self, *pts):
+        pts_mat = to_vec(*pts, flatten=True)
+        return (self.transform @ pts_mat.T).T
+
+
+class TransformControl:
+    def __init__(self, s, t):
+        self.s = s
+        self.t = t
+
+    def __enter__(self):
+        self.s.append(self.t)
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.s.pop()
+
+
 class Drawer:
     def __init__(self, acad=None):
         if acad is None:
             acad = Dispatch("AutoCAD.Application")
         self.doc = acad.ActiveDocument
         self.view = self.doc.ModelSpace
+        self.selection_sets = self.doc.SelectionSets
+        try:
+            self.sel = self.selection_sets.Add('__tempset1')
+        except com_error:
+            self.sel = self.selection_sets.Item('__tempset1')
+            self.sel.Clear()
         self.acad_interface = acad
-        self.transform = None
-        
+        self.tr_stack: list[Transform] = []
+
         print('关闭 WIPEOUT 边框')
         self.doc.SendCommand('wipeout f off ')
 
-    def set_transform(self, tranlation=(0, 0),
-                      theta=0., mirrored_y=False, tr=None):
-        if tuple(tranlation) == (0, 0) and\
-            theta == 0. and not mirrored_y and tr is None:
-            self.transform = None
-            return
+    def transformed(self, translation=(0, 0),
+                    theta=0., mirrored_y=False, tr=None):
         if tr is not None:
-            self.transform = tr
-            return
-        tr = get_rotmat(tranlation, theta)
-        if mirrored_y:
-            mirror_mat = get_mirrormat('y')
-            tr = mirror_mat @ tr
-        self.transform = tr
+            if not isinstance(tr, Transform):
+                raise ValueError(
+                    "The provided transform is not an instance of Transform.")
+            return TransformControl(self.tr_stack, tr)
+        return TransformControl(
+            self.tr_stack, Transform(translation, theta, mirrored_y))
 
     def _transformed_points(self, *pts):
-        if self.transform is None:
+        if len(self.tr_stack) == 0:
             if len(pts) != 1:
-                return (*pts,)
+                return pts
             return pts[0]
-        pts_mat = to_vec(*pts, flatten=True)
-        pts = (self.transform @ pts_mat.T).T
+        pts_mat = to_vec(*pts, flatten=True).T
+        for tr in reversed(self.tr_stack):
+            pts_mat = tr @ pts_mat
+        pts = pts_mat.T
         if len(pts) != 1:
-            return (*pts,)
+            return pts
         return pts[0]
+
+    def _transformed_angles(self, *angles):
+        transformed_angles = []
+        for angle in angles:
+            transformed_angle = angle
+            for tr in reversed(self.tr_stack):
+                transformed_angle = tr.apply_angle(transformed_angle)
+            transformed_angles.append(transformed_angle)
+        if len(transformed_angles) == 1:
+            return transformed_angles[0]
+        return transformed_angles
 
     def zoom_all(self):
         self.doc.Application.ZoomAll()
@@ -175,6 +248,8 @@ class Drawer:
         start_angle = np.deg2rad(start_angle)
         end_angle = np.deg2rad(end_angle)
         center = self._transformed_points(center)
+        start_angle, end_angle = self._transformed_angles(
+            start_angle, end_angle)
         return self.view.AddArc(aPoint(center), radius, start_angle, end_angle)
 
     def line(self, pt1, pt2):
@@ -186,15 +261,15 @@ class Drawer:
         return self.view.AddCircle(aPoint(center), radius)
 
     def rect(self, pt1, pt2):
-        pt1, pt2 = self._transformed_points(pt1, pt2)
         x1, y1, z1 = to_xyz(pt1)
         x2, y2, z2 = to_xyz(pt2)
         if z1 != z2:
             raise ValueError('非平面矩形！')
+        pt12 = (x1, y2, z1)
+        pt21 = (x2, y1, z1)
+        pt1, pt2, pt12, pt21 = self._transformed_points(pt1, pt2, pt12, pt21)
         pt_seq = sum((
-            (x1, y1, z1), (x2, y1, z1),
-            (x2, y2, z1), (x1, y2, z1),
-            (x1, y1, z1)
+            to_xyz(pt) for pt in (pt1, pt12, pt2, pt21, pt1)
         ), start=())
         return self.view.AddPolyline(aDouble(pt_seq))
 
@@ -209,6 +284,21 @@ class Drawer:
         ), start=())
         return self.view.AddPolyline(aDouble(pts))
 
+    def _select_recent(self, pt1, pt2, objname=None):
+        self.sel.Clear()
+        self.sel.Select(4,  # most recently created
+                        aPoint(pt1),
+                        aPoint(pt2))
+        time.sleep(0.05)
+        if self.sel.Count == 0:
+            raise ValueError("Failed to select the any object.")
+        sel = self.sel[0]
+        if objname is None:
+            return sel
+        time.sleep(0.02)
+        if sel.ObjectName != objname:
+            raise ValueError(f"Selected object is not of type {objname}.")
+
     def wipeout(self, *pts_list):
         pts = sum((
             tuple(pt) if isinstance(pt[0], (tuple, list))
@@ -220,21 +310,8 @@ class Drawer:
             f'{x:.10e},{y:.10e}' for x, y in pts_off]) + '  '
         # print(command)
         self.doc.SendCommand(command)
-        try:
-            sel = self.doc.SelectionSets.Add('tempset1')
-        except com_error:
-            sel = self.doc.SelectionSets.Item('tempset1').Delete()
-        finally:
-            sel = self.doc.SelectionSets.Add('tempset1')
-        sel.Select(4,  # most recently created
-                   aPoint(pts_off[0]),
-                   aPoint(pts_off[1]))
-        if sel.Count == 0:
-            raise ValueError("Failed to select the any object.")
-        wipeout = sel[0]
-        if wipeout.ObjectName != 'AcDbWipeout':
-            raise ValueError("Selected object is not a wipeout.")
-        return wipeout
+        return self._select_recent(
+            pts_off[0], pts_off[1], 'AcDbWipeout')
 
     def wipeout_rect(self, pt1, pt2):
         x1, y1, z1 = to_xyz(pt1)
@@ -271,8 +348,8 @@ class Drawer:
             random_angle = np.random.randint(-max_angle, -min_angle)
         theta = np.deg2rad(random_angle)
         pt1, pt2 = self._transformed_points(pt1, pt2)
-        pt1, pt2 = pt1[:1], pt2[:2]
-        tang = np.asarray(pt2) - np.asarray(pt1)
+        pt1, pt2 = pt1[:2], pt2[:2]
+        tang = pt2 - pt1
         rotation_matrix = np.asarray([
             [np.cos(theta), -np.sin(theta)],
             [np.sin(theta), np.cos(theta)]
@@ -304,8 +381,17 @@ class Path2D:
         elif not isinstance(x_or_seq, ndarray):
             off = np.array(x_or_seq)
         else:
-            raise ValueError('offset不够')
+            raise ValueError('offset维数不对')
         self.points.append(self.points[-1] + off)
+
+    def goto(self, x_or_seq, y=None):
+        if y is not None:
+            pt = np.array((x_or_seq, y))
+        elif not isinstance(x_or_seq, ndarray):
+            pt = np.array(x_or_seq)
+        else:
+            raise ValueError('point维数不对')
+        self.points.append(pt)
 
     def draw(self, drawer: Drawer):
         return drawer.polyline(*self.points)
