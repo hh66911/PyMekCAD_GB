@@ -154,16 +154,16 @@ class Bearing:
     def _draw_border(self, drawer: Drawer,
                      left_down: ndarray):
         """
-        Draws bearing border with chamfers.
-        Default model coordinate is defined as direction='UP';
-        origin is left down point of the right rectangle boarder
+        绘制带倒角的轴承边界。
+        默认模型坐标定义为方向='UP';
+        原点是右矩形边界的左下点
 
-        Params:
-            drawer (object): The drawing tool or context to use for rendering the part.
-            left_down (ndarray): The (x, y) coordinates for the left down point of the rect border.
-            transform (ndarray): transform matrix
+        参数:
+            drawer (object): 用于渲染零件的绘图工具或上下文。
+            left_down (ndarray): 矩形边界左下点的 (x, y) 坐标。
+            transform (ndarray): 变换矩阵
 
-        Returns:
+        返回:
             objs (list[Dispatch])
         """
         length = (self.da - self.d) / 2
@@ -184,15 +184,15 @@ class Bearing:
                     simplified: bool = False,
                     border_objs=None):
         """
-        Draws the inner part of the bearing.
+        绘制轴承的内部部分。
 
-        Params:
-            drawer (Drawer): The drawing tool or context to use for rendering the part.
-            left_down (ndarray): The (x, y) coordinates for the left down point of the border.
-            transform (ndarray): Transform matrix.
+        参数:
+            drawer (Drawer): 用于渲染零件的绘图工具或上下文。
+            left_down (ndarray): 边界左下点的 (x, y) 坐标。
+            transform (ndarray): 变换矩阵。
 
-        Returns:
-            objs (list[Dispatch]): List of drawn objects.
+        返回:
+            objs (list[Dispatch]): 绘制的对象列表。
         """
         if not isinstance(left_down, ndarray):
             left_down = np.array(left_down, dtype=np.floating)
@@ -269,16 +269,16 @@ class Bearing:
              center_pos: ndarray,
              direction: ndarray):
         """
-        Draws a part using the specified drawer, direction, and center position.
+        使用指定的绘图工具、方向和中心位置绘制零件。
 
-        Params:
-            drawer (object): The drawing tool or context to use for rendering the part.
-            direction (tuple): The direction vector in which to draw the part.
-            for angular-contact bearings the direction is of its axial direction force;
-            for deep grove ball bearings the direction is either of the two directions along the shaft.
-            center_pos (tuple): The (x, y) coordinates for the center position of the part.
+        参数:
+            drawer (object): 用于渲染零件的绘图工具或上下文。
+            direction (tuple): 绘制零件的方向向量。
+            对于角接触轴承，方向是其轴向力的方向；
+            对于深沟球轴承，方向是沿轴的两个方向之一。
+            center_pos (tuple): 零件中心位置的 (x, y) 坐标。
 
-        Returns:
+        返回:
             objs (list[Dispatch])
         """
         if not isinstance(center_pos, ndarray):
@@ -471,8 +471,7 @@ class Keyway:
         self.r = diameter / 2
 
         if length > diameter * 1.6:
-            raise ValueError(
-                "Length exceeds the maximum allowable length for the given diameter.")
+            raise ValueError("长度超过了给定直径的最大允许长度。")
 
         for idx, (min_d, max_d) in enumerate(Keyway.SIZE_LOOKUP_TABLE):
             if min_d <= diameter < max_d:
@@ -482,8 +481,7 @@ class Keyway:
                 self.t_hub = Keyway.T_HUB_TABLE[idx]
                 break
         else:
-            raise ValueError(
-                f"Diameter {diameter} is out of range for keyway size lookup.")
+            raise ValueError(f"直径 {diameter} 超出了键槽尺寸查找的范围。")
 
         self.type = ktype
         self.left_top = (-self.width / 2, self.length / 2)
@@ -621,7 +619,7 @@ def _get_offset(feat, halfl, put_side):
         elif isinstance(feat, _BearingFeature):
             feature_width = feat.bearing.b
         else:
-            raise ValueError("Unsupported feature type")
+            raise ValueError("不支持的特征类型。")
 
         # 计算偏移量
         if put_side == PutSide.BEFORE:
@@ -661,8 +659,7 @@ class Shaft:
         for k, v in Shaft.CR_TABLE.items():
             if k[0] < diameter <= k[1]:
                 return v
-        raise ValueError(
-            f"Diameter {diameter} is out of range for chamfer radius calculation.")
+        raise ValueError(f"直径 {diameter} 超出了倒角半径计算的范围。")
 
     def add_step(self, position, height=None, diameter=None):
         if height is not None:
@@ -670,7 +667,7 @@ class Shaft:
         elif diameter is not None:
             feat = _StepFeature(position, diameter, True)
         else:
-            raise ValueError("Either height or diameter must be provided.")
+            raise ValueError("必须提供高度或直径。")
         self.steps.append(feat)
         return feat
 

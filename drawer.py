@@ -39,7 +39,7 @@ def get_mirrormat(axis: str):
                 [0, 0, 0, 1]
             ])
         case _:
-            raise ValueError(f'Unsupported axis: {axis}')
+            raise ValueError(f'不支持的轴: {axis}')
 
 
 def to_xyz(seq):
@@ -53,8 +53,7 @@ def to_xyz(seq):
         return seq
     if length == 2:
         return (*seq, 0)
-    raise ValueError(
-        f"Invalid sequence length. Expected 2, 3, or 4 elements. recieved: {seq}")
+    raise ValueError(f"无效的序列长度。预期2、3或4个元素。收到: {seq}")
 
 
 def to_vec(*seqs, flatten=True, dim=4, return_split=False):
@@ -200,8 +199,7 @@ class Drawer:
 
         if tr is not None:
             if not isinstance(tr, Transform):
-                raise ValueError(
-                    "The provided transform is not an instance of Transform.")
+                raise ValueError("提供的变换不是 Transform 的实例。")
             return TransformControl(self.tr_stack, tr)
 
         return TransformControl(self.tr_stack, Transform(
@@ -288,13 +286,13 @@ class Drawer:
                         aPoint(pt2))
         time.sleep(0.02)
         if self.sel.Count == 0:
-            raise ValueError("Failed to select the any object.")
+            raise ValueError("选择对象失败。")
         sel = self.sel[0]
         if objname is None:
             return sel
         time.sleep(0.02)
         if sel.ObjectName != objname:
-            raise ValueError(f"Selected object is not of type {objname}.")
+            raise ValueError(f"选择的对象不是 {objname}.")
 
     def wipeout(self, *pts_list):
         pts = sum((
