@@ -4,6 +4,7 @@ import numpy as np
 from numpy import ndarray
 from win32com.client import VARIANT, Dispatch
 from pythoncom import VT_ARRAY, VT_R8, VT_DISPATCH, com_error
+from tenacity import retry, stop_after_attempt
 
 
 def get_rotmat(translate: tuple, theta: float):
@@ -129,30 +130,20 @@ class HatchType(Enum):
 
 class Transform:
     def __init__(self, translation=(0, 0),
-                 theta=0.0, mirrored_y=False):
+                 theta=0.0, mirrored_axis=None):
         tr = get_rotmat(translation, theta)
-        if mirrored_y:
-            mirror_mat = get_mirrormat('y')
+        if mirrored_axis is not None:
+            mirror_mat = get_mirrormat(mirrored_axis)
             tr = tr @ mirror_mat
         self.transform = tr
         self.translation = translation
         self.theta = theta
-        self.mirrored_y = mirrored_y
-
-    def __setitem__(self, name, value):
-        if name in ['translation', 'theta', 'mirrored_y']:
-            tr = get_rotmat(self.translation, self.theta)
-            if self.mirrored_y:
-                mirror_mat = get_mirrormat('y')
-                tr = tr @ mirror_mat
-            self.transform = tr
-        else:
-            raise ValueError(f"Invalid attribute name: {name}")
+        self.mirrored_axis = mirrored_axis
 
     def clear(self):
         self.transform = None
         self.theta = 0
-        self.mirrored_y = False
+        self.mirrored_axis = None
         self.translation = (0, 0)
 
     def __matmul__(self, other: ndarray):
@@ -163,26 +154,16 @@ class Transform:
     def apply_angle(self, angle: float):
         if self.transform is None:
             return angle
-        if self.mirrored_y:
-            angle = -angle
+        match self.mirrored_axis:
+            case 'x':
+                angle = -angle
+            case 'y':
+                angle = np.pi - angle
         return angle + self.theta
 
     def apply(self, *pts):
         pts_mat = to_vec(*pts, flatten=True)
         return (self.transform @ pts_mat.T).T
-
-
-class TransformControl:
-    def __init__(self, s, t):
-        self.s = s
-        self.t = t
-
-    def __enter__(self):
-        self.s.append(self.t)
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        self.s.pop()
 
 
 class Drawer:
@@ -204,14 +185,27 @@ class Drawer:
         self.doc.SendCommand('wipeout f off ')
 
     def transformed(self, translation=(0, 0),
-                    theta=0., mirrored_y=False, tr=None):
+                    theta=0., mirrored_axis=None, tr=None):
+        class TransformControl:
+            def __init__(self, s, t):
+                self.s = s
+                self.t = t
+
+            def __enter__(self):
+                self.s.append(self.t)
+                return self
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                self.s.pop()
+
         if tr is not None:
             if not isinstance(tr, Transform):
                 raise ValueError(
                     "The provided transform is not an instance of Transform.")
             return TransformControl(self.tr_stack, tr)
-        return TransformControl(
-            self.tr_stack, Transform(translation, theta, mirrored_y))
+
+        return TransformControl(self.tr_stack, Transform(
+            translation, theta, mirrored_axis))
 
     def _transformed_points(self, *pts):
         if len(self.tr_stack) == 0:
@@ -248,8 +242,8 @@ class Drawer:
         start_angle = np.deg2rad(start_angle)
         end_angle = np.deg2rad(end_angle)
         center = self._transformed_points(center)
-        start_angle, end_angle = self._transformed_angles(
-            start_angle, end_angle)
+        start_angle, end_angle = self._transformed_angles(start_angle, end_angle)
+        start_angle, end_angle = sorted((start_angle, end_angle))
         return self.view.AddArc(aPoint(center), radius, start_angle, end_angle)
 
     def line(self, pt1, pt2):
@@ -284,12 +278,14 @@ class Drawer:
         ), start=())
         return self.view.AddPolyline(aDouble(pts))
 
+    @retry(stop=stop_after_attempt(5))
     def _select_recent(self, pt1, pt2, objname=None):
         self.sel.Clear()
+        time.sleep(0.02)
         self.sel.Select(4,  # most recently created
                         aPoint(pt1),
                         aPoint(pt2))
-        time.sleep(0.05)
+        time.sleep(0.02)
         if self.sel.Count == 0:
             raise ValueError("Failed to select the any object.")
         sel = self.sel[0]

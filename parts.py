@@ -1,14 +1,12 @@
 from enum import Enum
 import math
 import re
-import pandas as pd
 from dataclasses import dataclass
 
 import numpy as np
-import matplotlib.pyplot as plt
 from numpy import ndarray
-from matplotlib.patches import Arc, Rectangle
 from win32com.client import CDispatch
+import pandas as pd
 
 from drawer import (
     Drawer, Path2D, LayerType
@@ -261,7 +259,7 @@ class Bearing:
                                   False, rb)
 
         # 画左边的部分
-        with drawer.transformed(mirrored_y=True):
+        with drawer.transformed(mirrored_axis='y'):
             lb = self._draw_border(drawer, pos)
             li = self._draw_inner(drawer, pos, True)
 
@@ -429,11 +427,11 @@ class Gear:
 
             res.right, res.right_hatch, res.right_axis = self._draw_half(
                 drawer, False)
-            
-            with drawer.transformed(mirrored_y=True):
+
+            with drawer.transformed(mirrored_axis='y'):
                 res.left, res.left_hatch, res.left_axis = self._draw_half(
                     drawer, True)
-            
+
             return res
 
 
@@ -564,6 +562,7 @@ class Shaft:
 
     def __init__(self, init_diam):
         self.initial_diameter = init_diam
+        self.length = None
         self.steps = []          # [(位置, 值, 是否绝对直径)]
 
         self.contour = []            # 原始轮廓
@@ -599,7 +598,7 @@ class Shaft:
     def add_gear(self, pos, gear: Gear):
         self.gears.append((pos, gear))
 
-    def process_features(self):
+    def process_features(self, num_pt_per_arc=5):
         events = []
         events.append((0, self.initial_diameter))
 
@@ -618,21 +617,39 @@ class Shaft:
         current_diam = self.initial_diameter
         self.contour.append((0, current_diam))
         for pos, diam in events:
-            self.contour.extend([(pos, current_diam), (pos, diam)])
+            if diam != current_diam:
+                self.contour.extend([(pos, current_diam), (pos, diam)])
+            else:
+                self.contour.append((pos, diam))
             current_diam = diam
 
-        # 圆角处理
-        self._apply_chamfers()
+        # 合并相同点
+        merged_contour = []
+        for i, c in enumerate(self.contour):
+            if i == 0 or c != merged_contour[-1]:
+                merged_contour.append(c)
+        self.contour = merged_contour
 
-    def _apply_chamfers(self, num_pt_per_arc=5):
-        """双圆角处理逻辑"""
+        self.length = self.contour[-1][0]
+        pos, d = self.contour[0]
+        self.contour[0] = (pos + 1, d)
+        self.contour.insert(0, (pos, d - 2))
+        pos, d = self.contour[-1]
+        self.contour[-1] = (pos - 1, d)
+        self.contour.append((pos, d - 2))
+        print(self.contour)
+
+        # 倒角处理
+        self._apply_chamfers(num_pt_per_arc)
+
+    def _apply_chamfers(self, num_pt_per_arc):
         self.chamfered_contour = []
 
         for i in range(len(self.contour)-1):
             x0, d0 = self.contour[i]
             x1, d1 = self.contour[i+1]
 
-            if x0 == x1:  # 垂直段（直径变化点）
+            if x0 == x1 and d0 != d1:  # 垂直段（直径变化点）
                 # 转换为半径单位进行计算
                 r0, r1 = d0 / 2, d1 / 2
                 delta_r = r1 - r0
@@ -654,31 +671,59 @@ class Shaft:
                           cy + fradius * np.sin(theta))
 
                 # 合并并排序坐标点
+                if delta_r > 0:
+                    self.chamfered_contour.append((cx, d0 / 2))
+                else:
+                    self.chamfered_contour.append((x0, d0 / 2))
+                    self.chamfered_contour.append((x0, cy))
                 self.chamfered_contour.append(Fillet(
-                    fradius, (cx, cy), pts,
+                    fradius, (cx, cy), list(pts),
                     start_angle, stop_angle,
                 ))
+                if delta_r > 0:
+                    self.chamfered_contour.append((x1, cy))
+                    self.contour[i + 1] = (x1, d1)
+                else:
+                    self.contour[i + 1] = (cx, d1)
+
             else:  # 水平段
                 self.chamfered_contour.append((x0, d0 / 2))
 
         # 添加轮廓末端
-        self.chamfered_contour.append(self.contour[-1])
+        last = self.contour[-1]
+        self.chamfered_contour.append((last[0], last[1] / 2))
 
-    def plot(self, drawer: Drawer,
+    def _draw_half_contour(self, drawer: Drawer):
+        path = Path2D((0, 0))
+        for segment in self.chamfered_contour:
+            if isinstance(segment, Fillet):
+                path.draw(drawer)
+                path = None
+                drawer.arc(segment.center, segment.radius,
+                           np.degrees(segment.start_angle),
+                           np.degrees(segment.stop_angle))
+            else:
+                if path is None:
+                    path = Path2D(segment)
+                else:
+                    path.goto(segment)
+        path.goto(self.length, 0)
+        path.draw(drawer)
+
+    def draw(self, drawer: Drawer,
              center: ndarray,
              direction: ndarray):
         if not self.chamfered_contour:
             self.process_features()
 
+        drawer.switch_layer(LayerType.SOLID)
         theta = np.arctan2(direction[1], direction[0]) - np.pi / 2
         with drawer.transformed(center, theta):
-            drawer.switch_layer(LayerType.SOLID)
-
             # WIPEOUT
-            pts_list = map(lambda x: x if isinstance(x, Fillet)
-                        else [x], self.chamfered_contour)
+            pts_list = map(lambda x: x.pts if isinstance(x, Fillet)
+                           else [x], self.chamfered_contour)
             pts_list = sum(pts_list, start=[])
-            pts = pts_list + [(pt[0], -pt[1]) for pt in pts_list]
+            pts = pts_list + [(pt[0], -pt[1]) for pt in reversed(pts_list)]
             drawer.wipeout(*pts)
 
             for pos, bearing in self.bearings:
@@ -687,13 +732,9 @@ class Shaft:
             for pos, gear in self.gears:
                 gear.draw(drawer, direction, (pos, 0))
 
-            for segment in self.chamfered_contour:
-                if isinstance(segment, Fillet):
-                    drawer.arc(segment.center, segment.radius,
-                            np.degrees(segment.start_angle),
-                            np.degrees(segment.stop_angle))
-                else:
-                    drawer.line(segment[0], segment[1])
+            self._draw_half_contour(drawer)
+            with drawer.transformed(mirrored_axis='x'):
+                self._draw_half_contour(drawer)
 
             for pos, keyway in self.keyways:
                 keyway.draw(
