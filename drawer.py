@@ -356,6 +356,9 @@ class Drawer:
         pts = aDouble((*pt1, 0, *pt2, 0))
         return self.view.AddSpline(pts, startTang, endTang)
 
+    def update(self):
+        self.doc.Regen(0)
+
 
 class Path2D:
     def __init__(self, start_pos=np.zeros(2)):
