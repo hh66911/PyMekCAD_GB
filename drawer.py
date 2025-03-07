@@ -4,7 +4,7 @@ import numpy as np
 from numpy import ndarray
 from win32com.client import VARIANT, Dispatch
 from pythoncom import VT_ARRAY, VT_R8, VT_DISPATCH, com_error
-from tenacity import retry, stop_after_attempt
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 
 def get_rotmat(translate: tuple, theta: float):
@@ -278,7 +278,8 @@ class Drawer:
         ), start=())
         return self.view.AddPolyline(aDouble(pts))
 
-    @retry(stop=stop_after_attempt(5))
+    @retry(stop=stop_after_attempt(5),
+           wait=wait_exponential(multiplier=1, min=1, max=10))
     def _select_recent(self, pt1, pt2, objname=None):
         self.sel.Clear()
         time.sleep(0.02)
@@ -390,7 +391,10 @@ class Path2D:
         self.points.append(pt)
 
     def draw(self, drawer: Drawer):
-        return drawer.polyline(*self.points)
+        if len(self.points) == 2:
+            return drawer.line(*self.points)
+        else:
+            return drawer.polyline(*self.points)
 
     def wipeout(self, drawer: Drawer):
         return drawer.wipeout(*self.points)

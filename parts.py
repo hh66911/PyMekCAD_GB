@@ -266,8 +266,8 @@ class Bearing:
         return rb, ri, ht, lb, li
 
     def draw(self, drawer: Drawer,
-             direction: ndarray,
-             center_pos: ndarray):
+             center_pos: ndarray,
+             direction: ndarray):
         """
         Draws a part using the specified drawer, direction, and center position.
 
@@ -403,8 +403,8 @@ class Gear:
         return objs, hatch, axis
 
     def draw(self, drawer: Drawer,
-             dir_vec: ndarray,
-             center_pos: ndarray):
+             center_pos: ndarray,
+             dir_vec: ndarray):
         if not isinstance(center_pos, ndarray):
             center_pos = np.array(center_pos, dtype=np.floating)
 
@@ -538,6 +538,27 @@ class Keyway:
             return result
 
 
+class Bushing:
+    def __init__(self, d1, d2, length):
+        self.d1 = d1
+        self.d2 = d2
+        self.length = length
+
+    def draw(self, drawer: Drawer,
+             center_pos: ndarray,
+             direction: ndarray):
+        if not isinstance(center_pos, ndarray):
+            center_pos = np.array(center_pos, dtype=np.floating)
+
+        theta = np.arctan2(direction[1], direction[0]) - np.pi / 2
+        with drawer.transformed(center_pos, theta):
+            drawer.switch_layer(LayerType.SOLID)
+            lt = (-self.d1 / 2, self.length / 2)
+            rb = (self.d1 / 2, -self.length / 2)
+            drawer.wipeout_rect(lt, rb)
+            return drawer.rect(lt, rb)
+
+
 @dataclass
 class Fillet:
     radius: float
@@ -545,6 +566,69 @@ class Fillet:
     pts: list
     start_angle: float
     stop_angle: float
+
+
+@dataclass
+class _StepFeature:
+    position: float
+    size: float
+    is_abs: bool
+
+    def __iter__(self):
+        return iter((self.position, self.size, self.is_abs))
+
+
+@dataclass
+class _ShoulderFeature:
+    position: float
+    width: float
+
+
+@dataclass
+class _BushingFeature:
+    position: float
+    width: float
+
+
+@dataclass
+class _GearFeature:
+    position: float
+    gear: Gear
+
+
+@dataclass
+class _BearingFeature:
+    position: float
+    bearing: Bearing
+
+
+class PutSide(Enum):
+    AFTER = 'after'
+    BEFORE = 'before'
+
+
+def _get_offset(feat, halfl, put_side):
+    if isinstance(feat, _StepFeature):
+        offset = -halfl
+        if put_side == PutSide.AFTER:
+            offset = -offset
+    else:
+        # 确定特征宽度
+        if isinstance(feat, (_ShoulderFeature, _BushingFeature)):
+            feature_width = feat.width
+        elif isinstance(feat, _GearFeature):
+            feature_width = 2 * feat.gear.half_bold
+        elif isinstance(feat, _BearingFeature):
+            feature_width = feat.bearing.b
+        else:
+            raise ValueError("Unsupported feature type")
+
+        # 计算偏移量
+        if put_side == PutSide.BEFORE:
+            offset = -halfl
+        else:
+            offset = halfl + feature_width
+    return offset
 
 
 class Shaft:
@@ -563,14 +647,15 @@ class Shaft:
     def __init__(self, init_diam):
         self.initial_diameter = init_diam
         self.length = None
-        self.steps = []          # [(位置, 值, 是否绝对直径)]
+        self.steps: list[_StepFeature] = []
 
         self.contour = []            # 原始轮廓
         self.chamfered_contour = []  # 倒角处理后的轮廓
+        self.chamfer_mode = None
 
-        self.gears: list[tuple[float, Gear]] = []
-        self.keyways: list[tuple[float, Keyway]] = []
-        self.bearings: list[tuple[float, Bearing]] = []
+        self.gears: list[tuple[float, Gear, bool]] = []
+        self.keyways: list[tuple[float, Keyway, bool]] = []
+        self.bearings: list[tuple[float, Bearing, bool]] = []
 
     def _get_chamfer_radius(self, diameter):
         for k, v in Shaft.CR_TABLE.items():
@@ -579,32 +664,80 @@ class Shaft:
         raise ValueError(
             f"Diameter {diameter} is out of range for chamfer radius calculation.")
 
-    def add_bearing(self, position, bearing: Bearing):
-        self.bearings.append((position, bearing))
-
     def add_step(self, position, height=None, diameter=None):
         if height is not None:
-            self.steps.append((position, height, False))
+            feat = _StepFeature(position, height, False)
         elif diameter is not None:
-            self.steps.append((position, diameter, True))
+            feat = _StepFeature(position, diameter, True)
+        else:
+            raise ValueError("Either height or diameter must be provided.")
+        self.steps.append(feat)
+        return feat
 
     def add_shoulder(self, position, height, width):
-        self.steps.append((position, height, False))
-        self.steps.append((position + width, -height, False))
+        self.steps.append(_StepFeature(position, height, False))
+        self.steps.append(_StepFeature(position + width, -height, False))
+        return _ShoulderFeature(position, width)
 
-    def add_keyway(self, position, keyway: Keyway):
-        self.keyways.append((position, keyway))
+    def add_keyway(self, pos_or_feat, keyway: Keyway,
+                   forward=True, put_side=PutSide.BEFORE):
+        if isinstance(pos_or_feat, float):
+            offset = 0
+        else:
+            offset = _get_offset(
+                pos_or_feat, keyway.length / 2, put_side)
+        self.keyways.append((pos_or_feat + offset, keyway, forward))
 
-    def add_gear(self, pos, gear: Gear):
-        self.gears.append((pos, gear))
+    def add_gear(self, pos_or_feat, gear: Gear,
+                 forward=True, put_side=PutSide.BEFORE):
+        if isinstance(pos_or_feat, float):
+            pos_or_feat = 0
+        else:
+            offset = _get_offset(
+                pos_or_feat, gear.half_bold, put_side)
+            pos_or_feat = pos_or_feat.position + offset
+        self.gears.append((pos_or_feat, gear, forward))
+        return _GearFeature(pos_or_feat, gear)
 
-    def process_features(self, num_pt_per_arc=5):
+    def add_bearing(self, pos_or_feat, bearing: Bearing,
+                    forward=True, put_side=PutSide.BEFORE):
+        if isinstance(pos_or_feat, float):
+            pos_or_feat = 0
+        else:
+            offset = _get_offset(
+                pos_or_feat, bearing.b / 2, put_side)
+            pos_or_feat = pos_or_feat.position + offset
+        self.bearings.append((pos_or_feat, bearing, forward))
+        return _BearingFeature(pos_or_feat, bearing)
+
+    def process_features(self, do_fillet=False, num_pt_per_arc=5):
+        if self.chamfer_mode == do_fillet:
+            return
+        self.chamfer_mode = do_fillet
+
+        # 检查所有零件是否定位良好
+        step_pos = tuple(map(lambda x: x.position, self.steps))
+        for pos, g, _ in self.gears:
+            if not (
+                pos + g.half_bold in step_pos or
+                pos - g.half_bold in step_pos
+            ):
+                print(f'({pos - g.half_bold} - {pos + g.half_bold})')
+                raise ValueError(f"位于 {pos} 的齿轮没有良好定位")
+        for pos, b, _ in self.bearings:
+            if not (
+                pos + b.b / 2 in step_pos or
+                pos - b.b / 2 in step_pos
+            ):
+                print(f'({pos - b.b / 2} - {pos + b.b / 2})')
+                raise ValueError(f"位于 {pos} 的轴承没有良好定位")
+
         events = []
         events.append((0, self.initial_diameter))
 
         # 处理阶梯特征
         current_diam = self.initial_diameter
-        self.steps.sort(key=lambda x: x[0])
+        self.steps.sort(key=lambda x: x.position)
         for pos, l, absolute in self.steps:
             if absolute:
                 current_diam = l
@@ -637,10 +770,12 @@ class Shaft:
         pos, d = self.contour[-1]
         self.contour[-1] = (pos - 1, d)
         self.contour.append((pos, d - 2))
-        print(self.contour)
 
         # 倒角处理
-        self._apply_chamfers(num_pt_per_arc)
+        if do_fillet:
+            self._apply_chamfers(num_pt_per_arc)
+        else:
+            self.chamfered_contour = [(x, y / 2) for x, y in self.contour]
 
     def _apply_chamfers(self, num_pt_per_arc):
         self.chamfered_contour = []
@@ -694,6 +829,7 @@ class Shaft:
         self.chamfered_contour.append((last[0], last[1] / 2))
 
     def _draw_half_contour(self, drawer: Drawer):
+        drawer.switch_layer(LayerType.SOLID)
         path = Path2D((0, 0))
         for segment in self.chamfered_contour:
             if isinstance(segment, Fillet):
@@ -711,14 +847,30 @@ class Shaft:
         path.draw(drawer)
 
     def draw(self, drawer: Drawer,
-             center: ndarray,
-             direction: ndarray):
-        if not self.chamfered_contour:
-            self.process_features()
+             top_center: ndarray,
+             direction: ndarray,
+             do_fillet=False):
+        self.process_features(do_fillet)
+
+        if not isinstance(direction, ndarray):
+            direction = np.array(direction)
+        if not isinstance(top_center, ndarray):
+            top_center = np.array(top_center)
 
         drawer.switch_layer(LayerType.SOLID)
-        theta = np.arctan2(direction[1], direction[0]) - np.pi / 2
-        with drawer.transformed(center, theta):
+        theta = np.arctan2(direction[1], direction[0]) - np.pi
+
+        with drawer.transformed(top_center, theta):
+            for pos, bearing, forward in self.bearings:
+                bearing.draw(
+                    drawer, (pos, 0),
+                    (-1, 0) if forward else (1, 0))
+
+            for pos, gear, forward in self.gears:
+                gear.draw(
+                    drawer, (pos, 0),
+                    (-1, 0) if forward else (1, 0))
+
             # WIPEOUT
             pts_list = map(lambda x: x.pts if isinstance(x, Fillet)
                            else [x], self.chamfered_contour)
@@ -726,16 +878,12 @@ class Shaft:
             pts = pts_list + [(pt[0], -pt[1]) for pt in reversed(pts_list)]
             drawer.wipeout(*pts)
 
-            for pos, bearing in self.bearings:
-                bearing.draw(drawer, direction, (pos, 0))
-
-            for pos, gear in self.gears:
-                gear.draw(drawer, direction, (pos, 0))
-
+            # Contour
             self._draw_half_contour(drawer)
             with drawer.transformed(mirrored_axis='x'):
                 self._draw_half_contour(drawer)
 
-            for pos, keyway in self.keyways:
+            for pos, keyway, forward in self.keyways:
                 keyway.draw(
-                    drawer, (pos, 0), direction)
+                    drawer, (pos, 0),
+                    (-1, 0) if forward else (1, 0))
