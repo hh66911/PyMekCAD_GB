@@ -244,7 +244,8 @@ class Drawer:
         start_angle = np.deg2rad(start_angle)
         end_angle = np.deg2rad(end_angle)
         center = self._transformed_points(center)
-        start_angle, end_angle = self._transformed_angles(start_angle, end_angle)
+        start_angle, end_angle = self._transformed_angles(
+            start_angle, end_angle)
         start_angle, end_angle = sorted((start_angle, end_angle))
         return self.view.AddArc(aPoint(center), radius, start_angle, end_angle)
 
@@ -300,7 +301,7 @@ class Drawer:
         # calc radius:
         r = np.sqrt((x - x1) ** 2 + (y - y1) ** 2)
         return self.circle((x, y, z1), r)
-    
+
     def arc3(self, p1, p2, p3, direction='clockwise'):
         """
         使用三点坐标计算圆心，并得到按一定旋转方向包含这三点的弧的起始角度和终止角度。
@@ -350,13 +351,13 @@ class Drawer:
             start_angle, end_angle = angles[0], angles[-1]
         else:
             raise ValueError("无效的旋转方向")
-        
+
         return self.arc(center, np.linalg.norm(np.array(p1) - np.array(center)),
-                 np.rad2deg(start_angle), np.rad2deg(end_angle))
+                        np.rad2deg(start_angle), np.rad2deg(end_angle))
 
     def polyline(self, *pts_list):
         pts = sum((
-            tuple(pt) if isinstance(pt[0], (tuple, list))
+            tuple(pt) if isinstance(pt[0], (tuple, list, ndarray))
             else (pt,) for pt in pts_list
         ), start=())
         pts = self._transformed_points(*pts)
@@ -449,11 +450,29 @@ class Drawer:
         self.doc.Regen(0)
 
 
+class Arc2D:
+    def __init__(self, c, r, a1, a2, is_rad=False):
+        self.c = c
+        self.a1 = np.rad2deg(a1) if is_rad else a1
+        self.a2 = np.rad2deg(a2) if is_rad else a2
+        self.r = r
+
+    def to_pts(self, num=100):
+        angles = np.linspace(self.a1, self.a2, num=num)
+        points = np.vstack((np.cos(angles), np.sin(angles))).T + self.c
+        return points
+
+    def draw(self, drawer: Drawer):
+        return drawer.arc(self.c, self.r,
+                          self.a1, self.a2)
+
+
 class Path2D:
     def __init__(self, start_pos=np.zeros(2)):
         if not isinstance(start_pos, ndarray):
             start_pos = np.array(start_pos)
         self.points = [start_pos]
+        self.temp_pos = None
 
     def __repr__(self):
         return f'Path2D({self.points})'
@@ -463,28 +482,88 @@ class Path2D:
         return f'{fmt_pts}'
 
     def offset(self, x_or_seq, y=None):
+        off = None
         if y is not None:
             off = np.array((x_or_seq, y))
         elif not isinstance(x_or_seq, ndarray):
+            if len(x_or_seq) < 2:
+                raise ValueError('offset维数不对')
             off = np.array(x_or_seq)
+            
+        if self.temp_pos is None:
+            self.points.append(self.points[-1] + off)
         else:
-            raise ValueError('offset维数不对')
-        self.points.append(self.points[-1] + off)
+            self.temp_pos = self.temp_pos + off
 
     def goto(self, x_or_seq, y=None):
+        pt = None
         if y is not None:
             pt = np.array((x_or_seq, y))
         elif not isinstance(x_or_seq, ndarray):
+            if len(x_or_seq) < 2:
+                raise ValueError('point维数不对')
             pt = np.array(x_or_seq)
+            
+        if self.temp_pos is None:
+            self.points.append(pt)
         else:
-            raise ValueError('point维数不对')
-        self.points.append(pt)
+            self.temp_pos = pt
 
     def draw(self, drawer: Drawer):
         if len(self.points) == 2:
             return drawer.line(*self.points)
-        else:
-            return drawer.polyline(*self.points)
+        result = []
+        pts = []
+        for p in self.points:
+            if isinstance(p, Arc2D):
+                result.append(p.draw(drawer))
+                if len(pts) > 0:
+                    if len(pts) == 2:
+                        result.append(drawer.line(pts[0], pts[1]))
+                    else:
+                        result.append(drawer.polyline(pts))
+                    pts.clear()
+            else:
+                pts.append(p)
+        if len(pts) > 1:
+            if len(pts) == 2:
+                result.append(drawer.line(pts[0], pts[1]))
+            else:
+                result.append(drawer.polyline(pts))
+        return result
 
     def wipeout(self, drawer: Drawer):
-        return drawer.wipeout(*self.points)
+        points = sum((
+            p.to_pts() if isinstance(p, Arc2D) else (p,)
+            for p in self.points
+        ), start=())
+        return drawer.wipeout(*points)
+
+    def arc(self, r, angle, is_left=True):
+        if len(self.points) < 2:
+            raise ValueError('不够一条线')
+        vec = np.array((0, 0, 1))
+        vec = vec if is_left else -vec
+        vecl = self.points[-1] - self.points[-2]
+        vecl = to_vec(vecl, dim=3)
+        vecr = np.cross(vec, vecl)[0]
+        vecr = vecr / np.linalg.norm(vecr)
+        cen = self.points[-1] + vecr[:2] * r
+        t0 = np.arctan2(-vecr[1], -vecr[0])
+        t1 = t0 + np.deg2rad(angle if is_left else -angle)
+        self.points.append(Arc2D(cen, r, t0, t1, True))
+        self.points.append(cen + (r * np.cos(t1), r * np.sin(t1)))
+
+    def up(self):
+        if self.temp_pos is None:
+            self.temp_pos = self.points[-1]
+        else:
+            raise ValueError('已经抬笔了')
+        return self.temp_pos
+
+    def down(self):
+        if self.temp_pos is None:
+            raise ValueError('笔未抬起')
+        if self.temp_pos != self.points[-1]:
+            self.points.append(self.temp_pos)
+        self.temp_pos = None

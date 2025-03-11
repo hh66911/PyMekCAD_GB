@@ -374,7 +374,8 @@ class BearingCover:
         b = [5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8]
         delta = [10, 10, 12, 12, 12, 12, 12, 12, 12,
                  12, 12, 12, 12, 15, 15, 15, 15, 15, 15, 15]
-        idx = d.index(dd)
+        idx = min(d, key=lambda x: abs(x - dd))
+        idx = d.index(idx)
         delta = delta[idx]
         self.b = b[idx] * 1.5
         self.b0 = b[idx]
@@ -749,10 +750,13 @@ class Bushing:
                 rb = np.array((self.length / 2, self.d2 / 2))
                 res.wipeouts.append(drawer.wipeout_rect(lt, rb))
                 res.rects.append(drawer.rect(lt, rb))
+                drawer.switch_layer(LayerType.THIN)
                 res.hatchs.append(drawer.hatch(res.rects[0]))
+                drawer.switch_layer(LayerType.SOLID)
                 lt, rb = -lt, -rb
                 res.wipeouts.append(drawer.wipeout_rect(lt, rb))
                 res.rects.append(drawer.rect(lt, rb))
+                drawer.switch_layer(LayerType.THIN)
                 res.hatchs.append(drawer.hatch(res.rects[1]))
                 return res
         with drawer.transformed(center_pos, theta):
@@ -768,10 +772,13 @@ class Bushing:
             path.goto(self.length / 2, self.d1 / 2)
             res.wipeouts.append(path.wipeout(drawer))
             res.rects.append(path.draw(drawer))
+            drawer.switch_layer(LayerType.THIN)
             res.hatchs.append(drawer.hatch(res.rects[0]))
+            drawer.switch_layer(LayerType.SOLID)
             with drawer.transformed(mirrored_axis='x'):
                 res.wipeouts.append(path.wipeout(drawer))
                 res.rects.append(path.draw(drawer))
+                drawer.switch_layer(LayerType.THIN)
                 res.hatchs.append(drawer.hatch(res.rects[1]))
             return res
 
@@ -911,6 +918,7 @@ class Shaft:
         self.length = None
         self.steps: list[_StepFeature] = []
 
+        self.cr = None
         self.cr = self._get_chamfer_radius(self.initial_diameter)
 
         self.contour = []            # 原始轮廓
@@ -982,6 +990,7 @@ class Shaft:
             if bs.pos_abs:
                 rpos = rpos - pos - bs.length / 2
             bu.rise = (rpos, bs.rise_diam, bs.rise_length)
+        # print(bu.d1, bu.d2, bu.length, bu.rise)
         self.bushings.append((pos, bu, forward))
         return _BushingFeature(pos, bs.length, (bs.d2 - d1) / 2)
 
@@ -1008,7 +1017,6 @@ class Shaft:
         if not isinstance(pos_or_feat, float):
             pos_or_feat = pos_or_feat.position + _get_offset(
                 pos_or_feat, gear.half_bold, put_side)
-
         self.gears.append((pos_or_feat, gear, forward))
         return _GearFeature(pos_or_feat, gear)
 
@@ -1462,7 +1470,8 @@ class Box:
             C2 = [22, 25, 30, 50, 58, 60, 70, 95]
             D0 = [45, 48, 60, 85, 100, 110, 130, 170]
             rmax = [np.inf for i in range(len(ind))]
-        ind = ind.index(d)
+        val = min(ind, key=lambda x: abs(x - d))
+        ind = ind.index(val)
         return C1[ind], C2[ind], D0[ind], rmax[ind]
 
     B1_SCALE: tuple = (0.8, 0.85)
@@ -1487,8 +1496,8 @@ class Box:
                 setattr(self, attr, min_scale +
                         (max_scale - min_scale) * scale)
 
-    def _calc_cover_l(self, c1, c2):
-        '''箱盖和箱盖凸缘宽度计算'''
+    def _calc_cover_l1(self, c1, c2):
+        '''箱体和箱盖凸缘宽度计算'''
         return round(c1 + c2 + self.L1_PLUS_SCALE)
 
     def __init__(self, gears, bearings, scale=0.5):
@@ -1497,13 +1506,14 @@ class Box:
         self.scale = scale
         self._calc_all_scales()
 
-        self.gears, self.bearings = gears, bearings
+        self.gears: list[Gear] = gears
+        self.bearings: list[Bearing] = bearings
         self.aI = self.gears[0].ra + self.gears[1].ra  # 高速级中心距
         self.aII = self.gears[3].ra + self.gears[2].ra  # 低速级中心距
         Ds = [b.da for b in self.bearings]  # 轴承外径
 
         self.b = round(max(0.025 * self.aII + 3, 8))  # 底座壁厚δ
-        self.b1 = round(min(self.b * self.B1_SCALE, 8))  # 箱体壁厚δ₁
+        self.b1 = round(max(self.b * self.B1_SCALE, 8))  # 箱体壁厚δ₁
         self.h0 = round(self.b * self.H0_SCALE)  # 底座上部凸缘厚度h₀
         self.h1 = round(self.b1 * self.H1_SCALE)  # 箱盖凸缘厚度h₁
         self.h2 = round(self.b * self.H2_SCALE)  # 底座下部凸缘厚度h₂、h₃、h₄
@@ -1564,12 +1574,108 @@ class Box:
         width = sum(map(lambda g: g.half_bold, self.gears))
         self.width = self.delta1 * 3 + width
 
+        self.c1, self.c2 = self._get_bolt_flange(self.d3, False)[:2]
+        self.l1 = self._calc_cover_l1(self.c1, self.c2)
+        self.B = self.l1 + self.b
+        c1, c2, _, _ = self._get_bolt_flange(self.d_feet, True)
+        self.c11, self.c21 = c1, c2
+
+        self.oil_pointer: OilPointer = None
+        self.shafts: list[Shaft] = []
+        self.bearing_covers: list[BearingCover] = [None, None, None]
+
+    def accept(self, obj):
+        if isinstance(obj, OilPointer):
+            self.oil_pointer = obj
+        else:
+            raise TypeError('未知物品')
+
+    def gen_shaft1(self, d, m=40):
+        shaft1 = Shaft(d)
+        dd = round(0.07 * d + 2)
+        b1 = self.bearings[0]
+        d2 = round(b1.d + 2 * b1.inner_thick / 3)
+        bc1 = BearingCover(b1.da, d + dd * 2, m)
+
+        shaft1.add_step(36, dd)
+        pos1 = 36 + 10 + bc1.e + bc1.m
+        shaft1.add_step(pos1, diameter=b1.d)
+        s1 = shaft1.add_step(pos1 + b1.b + 20, dd)
+        pos2 = pos1 - bc1.m + self.B
+        pos_bu = pos2 - pos1 - b1.b
+        bu = shaft1.add_bushing(s1, BushingShape(
+            20, d2, pos_bu - 2,
+            False, bc1.D - 2, 5
+        ))
+        shaft1.add_bearing(bu, b1)
+
+        pos4 = self.width + pos2 - self.delta1
+        pos3 = pos4 - self.gears[0].half_bold * 2
+        shaft1.add_step(pos3 - 10, 5)
+        s1 = shaft1.add_step(pos3, diameter=self.gears[0].r_hole * 2)
+        g1 = shaft1.add_gear(s1, self.gears[0],
+                        put_side=PutSide.AFTER)
+        shaft1.add_keyway(g1, 40)
+        shaft1.add_step(pos4 - 2, -dd)
+        s1 = shaft1.add_step(pos4 + self.delta1, diameter=b1.d)
+        shaft1.add_step(pos4 + self.delta1 + 10 + b1.b, 0)
+        bu = shaft1.add_bushing(s1, BushingShape(
+            10, d2, 5,
+            False, bc1.D, 5
+        ), PutSide.AFTER, forward=False)
+        shaft1.add_bearing(bu, b1, False,
+                           PutSide.AFTER)
+        m2 = self.width + self.B - pos4 + pos2
+        print(m2)
+        bc12 = BearingCover(b1.da, d, m2)
+        self.bearing_covers[0] = (bc1, bc12)
+        return shaft1
+    
+    def gen_shaft2(self, d):
+        dd = round(0.07 * d + 2)
+        b2 = self.bearings[2]
+        shaft2 = Shaft(d)
+        
+        m = 30
+        bc2 = BearingCover(b2.da, b2.d, m)
+        
+        pos1_ = m + b2.b
+        pos2 = self.B - pos1_
+        bs = BushingShape(20, d + dd, pos2 - 2,
+                     True, bc2.D, 5)
+        print(bs)
+        pos3 = b2.b + 20
+        g1 = self.gears[1]
+        pos4 = pos3 + g1.half_bold * 2
+        sh = shaft2.add_shoulder(pos4, 5, self.delta1)
+        shaft2.add_step(pos3 + 2, dd)
+        g1 = shaft2.add_gear(sh, g1)
+        g2 = self.gears[2]
+        g2 = shaft2.add_gear(sh, g2, put_side=PutSide.AFTER)
+        bu = shaft2.add_bushing(g1, bs)
+        shaft2.add_bearing(bu, b2)
+        
+        pos5 = pos4 + self.delta1 + self.gears[2].half_bold * 2
+        shaft2.add_step(pos5 - 2, -dd)
+        
+        m2 = m + 10
+        pos6 = pos5 + self.delta1 + self.B - m2 - b2.b
+        bs = BushingShape(
+            pos6 - pos5, dd + d, pos6 - pos5 - self.delta1,
+            False, bc2.D
+        )
+        bu = shaft2.add_bushing(g2, bs, PutSide.AFTER, False)
+        shaft2.add_bearing(bu, b2, False, PutSide.AFTER)
+        
+        return shaft2
+        
+
     def _draw_bottom_layer0_half(self, drawer: Drawer):
         halfl = self.length / 2
         dc = BoltHead.get_nominal_parameters(self.d_feet)
         dc = dc['dc']
         # C1 内侧， C2 外侧
-        c1, c2, d0, rm = self._get_bolt_flange(self.d_feet, True)
+        c1, c2 = self.c11, self.c21
         yoff = self.width / 2 + c1 + c2 + self.b
         with drawer.transformed((0, -yoff)):
             drawer.line((halfl, c1 + c2 + c2),
@@ -1605,12 +1711,38 @@ class Box:
         self._draw_bottom_layer0_half(drawer)
         with drawer.transformed(mirrored_axis='y'):
             self._draw_bottom_layer0_half(drawer)
+        if self.oil_pointer is not None:
+            with drawer.transformed((-self.length / 2 + self.b, 0)):
+                l = self.oil_pointer.dc * 2
+                path = Path2D((0, 0))
+                path.offset(0, l)
+                path.offset(l, 0)
+                path.offset(0, -l)
+                path.draw(drawer)
+
+    def _draw_bottom_layer1(self, drawer: Drawer):
+        path = Path2D((-self.length / 2, 0))
+        path.offset(0, -self.width / 2)
+        path.offset(self.length, 0)
+        path.offset(0, self.width / 2)
+        path.draw(drawer)
+
+        path = Path2D((-self.length / 2 - self.B, 0))
+        path.offset(0, -self.B)
+        path.arc(self.l1, 90)
+        record = path.up()
+        path.offset(self.gears[0].ra + self.delta, 0)
+        path.offset()
 
     def draw(self, drawer: Drawer, view: ViewPort,
-             center: ndarray, dir: ndarray):
-        theta = np.arctan2(dir[1], dir[0]) - np.pi / 2
+             center: ndarray, dire: ndarray):
+        theta = np.arctan2(dire[1], dire[0]) - np.pi / 2
         if view == ViewPort.TOP2BOTTOM:
             with drawer.transformed(center, theta):
                 self._draw_bottom_layer0(drawer)
                 with drawer.transformed(mirrored_axis='x'):
                     self._draw_bottom_layer0(drawer)
+            with drawer.transformed(center, theta):
+                self._draw_bottom_layer1(drawer)
+                with drawer.transformed(mirrored_axis='x'):
+                    self._draw_bottom_layer1(drawer)
