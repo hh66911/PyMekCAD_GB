@@ -10,7 +10,7 @@ from win32com.client import CDispatch
 import pandas as pd
 
 from drawer import (
-    Drawer, Path2D, LayerType
+    Drawer, Path2D, LayerType, HatchType
 )
 
 
@@ -326,6 +326,153 @@ class Bearing:
             return res
 
 
+class BearingCover:
+    BEARING_BASE = {
+        'D': [47, 52, 62, 72, 80, 85, 90, 100, 110, 120, 125,
+              130, 140, 150, 160, 170, 180, 190, 200],
+        'D1': [68, 72, 85, 95, 105, 110, 115, 125, 140, 150,
+               155, 160, 170, 185, 195, 205, 215, 225, 235],
+        'D2': [85, 90, 105, 115, 125, 130, 135, 145, 165, 175,
+               180, 185, 200, 215, 230, 240, 255, 265, 275],
+        'd1': [8, 8, 8, 10, 10, 10, 12, 12, 12, 16,
+               16, 16, 16, 16, 16, 16, 16, 16, 16],
+        'n': [4, 4, 4, 4, 4, 6, 6, 6, 6, 6,
+              6, 6, 6, 6, 6, 6, 6, 6, 6]
+    }
+
+    def __init__(self, da, dd, m):
+        D = da
+        if D in self.BEARING_BASE['D']:
+            idx = self.BEARING_BASE['D'].index(D)
+        else:
+            idx = min(self.BEARING_BASE['D'], key=lambda x: abs(x - D))
+            idx = self.BEARING_BASE['D'].index(idx)
+        self.d3 = self.BEARING_BASE['d1'][idx]  # 轴承盖固定螺栓直径d₄
+        self.D0 = self.BEARING_BASE['D1'][idx]  # 轴承盖螺栓分布圆直径D₁
+        self.D2 = self.BEARING_BASE['D2'][idx]  # 轴承座凸缘端面直径D₂
+        self.n = self.BEARING_BASE['n'][idx]
+        self.d0 = self.d3 + 1
+        self.D4 = D - 10
+        self.e = 1.2 * self.d3
+        self.e1 = self.e + 0.2
+        self.D = D
+        self.m = m
+
+        self.cr = 1
+
+        d = [15, 20, 25, 30, 35, 40, 45, 50, 55, 60,
+             65, 70, 75, 80, 85, 90, 95, 100, 105, 110]
+        D = [29, 33, 39, 45, 49, 53, 61, 69, 74, 80, 84,
+             90, 94, 102, 107, 112, 117, 122, 127, 132]
+        d1 = [14, 19, 24, 29, 34, 39, 44, 49, 53, 58,
+              63, 68, 73, 78, 83, 88, 93, 98, 103, 108]
+        B = [6, 6, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 9, 9, 9, 10, 10, 10, 10]
+        D0 = [28, 32, 38, 44, 48, 52, 60, 68, 72, 78, 82,
+              88, 92, 100, 105, 110, 115, 120, 125, 130]
+        d0 = [16, 21, 26, 31, 36, 41, 46, 51, 56, 61,
+              66, 71, 77, 82, 87, 92, 97, 102, 107, 112]
+        b = [5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8]
+        delta = [10, 10, 12, 12, 12, 12, 12, 12, 12,
+                 12, 12, 12, 12, 15, 15, 15, 15, 15, 15, 15]
+        idx = d.index(dd)
+        delta = delta[idx]
+        self.b = b[idx] * 1.5
+        self.b0 = b[idx]
+        self.yoff = (delta - self.b) / 2
+        self.yoff2 = (self.b - self.b0) / 2
+        self.b1 = self.cr + self.yoff * 3 + self.yoff2 * 4 + self.b0 * 2
+        self.D1 = D0[idx]
+        self.d1 = d0[idx]
+
+        self.d = dd
+        self.B = (self.D1 - dd) / (
+            self.D1 - self.d1) * (self.b - self.b0) + self.b0
+        self.yoff1 = self.yoff - (self.B - self.b)
+        self.yoff3 = (self.yoff - self.yoff1) / 2 + self.yoff2
+        self.ccc = self.yoff1 + (self.yoff - self.yoff1) / 2
+
+    def draw(self, drawer: Drawer,
+             center, direction):
+        theta = np.arctan2(direction[1], direction[0]) - np.pi / 2
+        drawer.switch_layer(LayerType.SOLID)
+
+        with drawer.transformed(center, theta):
+            path = Path2D((-self.D0 / 2 + self.d0 * 1.5, self.e))
+            path.goto(-self.D2 / 2 + self.cr, self.e)
+            path.offset(-self.cr, -self.cr)
+            path.offset(0, -self.e + self.cr)
+            path.goto(-self.D / 2 + self.cr, 0)
+            path.offset(0, -self.cr)
+            path.offset(-self.cr, 0)
+            path.offset(0, -self.e1 + self.cr)
+            path.goto(-self.D / 2, -self.e1)
+            path.offset(self.cr, 0)
+            path.offset(0, -self.m + self.e1)
+            path.offset((self.D - self.D4) / 2 - self.cr, 0)
+            path.goto(-self.D4 / 2 + 2, self.e - self.b1)
+            path.goto(-self.d1 / 2, self.e - self.b1)
+            path.offset(0, self.yoff)
+            path.offset((self.d1 - self.D1) / 2, self.yoff2)
+            path.offset(0, self.b0)
+            path.offset((self.D1 - self.d1) / 2, self.yoff2)
+            path.offset(0, self.yoff)
+            path.offset((self.d1 - self.D1) / 2, self.yoff2)
+            path.offset(0, self.b0)
+            path.offset((self.D1 - self.d1) / 2, self.yoff2)
+            path.offset(0, self.yoff)
+            path.goto(-self.D0 / 2 + self.d0 * 1.5, self.e - self.cr)
+            path.offset(0, self.cr)
+            left = path.draw(drawer)
+            drawer.hatch(left)
+            with drawer.transformed(mirrored_axis='y'):
+                right = path.draw(drawer)
+                drawer.hatch(right)
+            path = Path2D((-self.d / 2, self.e - self.b1 + self.ccc))
+            path.offset((self.d - self.D1) / 2, self.yoff3)
+            path.offset(0, self.b0)
+            path.offset((self.D1 - self.d) / 2, self.yoff3)
+            path.offset(0, self.yoff1)
+            path.offset((self.d - self.D1) / 2, self.yoff3)
+            path.offset(0, self.b0)
+            path.offset((self.D1 - self.d) / 2, self.yoff3)
+            path.goto((-self.d / 2, self.e - self.b1 + self.ccc))
+            maozan = path.wipeout(drawer)
+            maozan = path.draw(drawer)
+            drawer.hatch(maozan, hatch_type=HatchType.RUBBER)
+            drawer.line((-self.D0 / 2 + self.d0 * 1.5, self.e),
+                        (-self.d / 2, self.e))
+            drawer.line((-self.D0 / 2 + self.d0 * 1.5, self.e - self.cr),
+                        (-self.d / 2, self.e - self.cr))
+            drawer.line((-self.d1 / 2, self.e - self.b1),
+                        (-self.d / 2, self.e - self.b1))
+            with drawer.transformed(mirrored_axis='y'):
+                drawer.line((-self.D0 / 2 + self.d0 * 1.5, self.e),
+                            (-self.d / 2, self.e))
+                drawer.line((-self.D0 / 2 + self.d0 * 1.5, self.e - self.cr),
+                            (-self.d / 2, self.e - self.cr))
+                drawer.line((-self.d1 / 2, self.e - self.b1),
+                            (-self.d / 2, self.e - self.b1))
+                maozan = path.wipeout(drawer)
+                maozan = path.draw(drawer)
+                drawer.hatch(maozan, hatch_type=HatchType.RUBBER)
+
+            with drawer.transformed((-self.D0 / 2, 0)):
+                lt = (-self.d0 / 2, self.e)
+                rb = (self.d0 / 2, 0)
+                drawer.wipeout_rect(lt, rb)
+                drawer.rect(lt, rb)
+                drawer.switch_layer(LayerType.DOTTED)
+                drawer.line((0, -3), (0, self.e + 3))
+            drawer.switch_layer(LayerType.SOLID)
+            with drawer.transformed((self.D0 / 2, 0)):
+                lt = (-self.d0 / 2, self.e)
+                rb = (self.d0 / 2, 0)
+                drawer.wipeout_rect(lt, rb)
+                drawer.rect(lt, rb)
+                drawer.switch_layer(LayerType.DOTTED)
+                drawer.line((0, -3), (0, self.e + 3))
+
+
 @dataclass
 class DrawedGear:
     right: list[CDispatch] = None
@@ -347,7 +494,7 @@ class Gear:
     def __init__(self, module, teeth, bold, d_hole,
                  rot_dir=GearRotation.NONE,
                  beta: Angle = Angle(0)):
-        teeth_v = teeth / (beta.cos()**3)
+        teeth_v = teeth / (beta.cos())
         self.diameter = teeth_v * module
         pitch_diameter = module * teeth_v
         self.r = pitch_diameter / 2
@@ -358,7 +505,7 @@ class Gear:
         self.angle = beta.to_radians()
         self.rotation = rot_dir
         self.c_outer = module
-        self.c_inner = Shaft._get_chamfer_radius(self.r_hole)
+        self.c_inner = Shaft._get_chamfer_radius(None, self.r_hole)
 
     def _draw_half(self, drawer: Drawer, is_second=False):
         bold = self.half_bold * 2
@@ -551,7 +698,6 @@ class Keyway:
 
     def _draw_on_hub(self, drawer: Drawer, hub_bold: float):
         drawer.switch_layer(LayerType.SOLID)
-
         lt = (self.r, hub_bold / 2)
         rb = (self.r + self.t_hub, -hub_bold / 2)
         drawer.wipeout_rect(lt, rb)
@@ -560,14 +706,17 @@ class Keyway:
     def draw(self, drawer: Drawer,
              center_pos: ndarray,
              direction: ndarray,
-             hub_bold: float):
+             hub_bold: float, on_hub=False):
         theta = np.arctan2(direction[1], direction[0]) - np.pi / 2
         with drawer.transformed(center_pos, theta):
-            result = (
-                self._draw_on_shaft(drawer),
-                self._draw_on_hub(drawer, hub_bold),
-            )
-            return result
+            if on_hub:
+                result = (
+                    self._draw_on_shaft(drawer),
+                    self._draw_on_hub(drawer, hub_bold),
+                )
+            else:
+                result = self._draw_on_shaft(drawer)
+        return result
 
 
 @dataclass
@@ -583,6 +732,8 @@ class Bushing:
         self.d2 = d2
         self.length = length
 
+        self.rise = None
+
     def draw(self, drawer: Drawer,
              center_pos: ndarray,
              direction: ndarray):
@@ -592,16 +743,36 @@ class Bushing:
         res = DrawedBushing([], [], [])
         drawer.switch_layer(LayerType.SOLID)
         theta = np.arctan2(direction[1], direction[0]) - np.pi / 2
+        if self.rise is None:
+            with drawer.transformed(center_pos, theta):
+                lt = np.array((-self.length / 2, self.d1 / 2))
+                rb = np.array((self.length / 2, self.d2 / 2))
+                res.wipeouts.append(drawer.wipeout_rect(lt, rb))
+                res.rects.append(drawer.rect(lt, rb))
+                res.hatchs.append(drawer.hatch(res.rects[0]))
+                lt, rb = -lt, -rb
+                res.wipeouts.append(drawer.wipeout_rect(lt, rb))
+                res.rects.append(drawer.rect(lt, rb))
+                res.hatchs.append(drawer.hatch(res.rects[1]))
+                return res
         with drawer.transformed(center_pos, theta):
-            lt = np.array((-self.length / 2, self.d1 / 2))
-            rb = np.array((self.length / 2, self.d2 / 2))
-            res.wipeouts.append(drawer.wipeout_rect(lt, rb))
-            res.rects.append(drawer.rect(lt, rb))
+            rpos, rd, rl = self.rise
+            path = Path2D((self.length / 2, self.d1 / 2))
+            path.offset(-self.length, 0)
+            path.offset(0, (self.d2 - self.d1) / 2)
+            path.offset(rpos, 0)
+            path.offset(0, (rd - self.d2) / 2)
+            path.offset(rl, 0)
+            path.offset(0, -(rd - self.d2) / 2)
+            path.goto(self.length / 2, self.d2 / 2)
+            path.goto(self.length / 2, self.d1 / 2)
+            res.wipeouts.append(path.wipeout(drawer))
+            res.rects.append(path.draw(drawer))
             res.hatchs.append(drawer.hatch(res.rects[0]))
-            lt, rb = -lt, -rb
-            res.wipeouts.append(drawer.wipeout_rect(lt, rb))
-            res.rects.append(drawer.rect(lt, rb))
-            res.hatchs.append(drawer.hatch(res.rects[1]))
+            with drawer.transformed(mirrored_axis='x'):
+                res.wipeouts.append(path.wipeout(drawer))
+                res.rects.append(path.draw(drawer))
+                res.hatchs.append(drawer.hatch(res.rects[1]))
             return res
 
 
@@ -615,8 +786,27 @@ class Fillet:
 
 
 @dataclass
-class _StepFeature:
+class _FixedFeature:
     position: float
+
+
+@dataclass
+class _StartFeature(_FixedFeature):
+    pass
+
+
+@dataclass
+class _EndFeature(_FixedFeature):
+    pass
+
+
+@dataclass
+class _CouplingFeature(_FixedFeature):
+    length: float
+
+
+@dataclass
+class _StepFeature(_FixedFeature):
     size: float
     is_abs: bool
 
@@ -625,33 +815,39 @@ class _StepFeature:
 
 
 @dataclass
-class _ShoulderFeature:
-    position: float
+class _ShoulderFeature(_FixedFeature):
     width: float
 
 
 @dataclass
-class _BushingFeature:
-    position: float
+class _BushingFeature(_FixedFeature):
+    width: float
     height: float
-    width: float
 
 
 @dataclass
-class _GearFeature:
-    position: float
+class _GearFeature(_FixedFeature):
     gear: Gear
 
 
 @dataclass
-class _BearingFeature:
-    position: float
+class _BearingFeature(_FixedFeature):
     bearing: Bearing
 
 
 class PutSide(Enum):
     AFTER = 'after'
     BEFORE = 'before'
+
+
+@dataclass
+class BushingShape:
+    length: float
+    d2: float
+    rise_pos: float = None
+    pos_abs: bool = None
+    rise_diam: float = None
+    rise_length: float = None
 
 
 def _get_offset(feat, halfl, put_side):
@@ -663,6 +859,10 @@ def _get_offset(feat, halfl, put_side):
         offset = -halfl
         if put_side == PutSide.AFTER:
             offset = -offset + feat.width
+    elif isinstance(feat, _StartFeature):
+        offset = halfl
+    elif isinstance(feat, _EndFeature):
+        offset = -halfl
     else:
         # 确定特征宽度
         if isinstance(feat, _BushingFeature):
@@ -671,6 +871,8 @@ def _get_offset(feat, halfl, put_side):
             feature_width = feat.gear.half_bold
         elif isinstance(feat, _BearingFeature):
             feature_width = feat.bearing.b / 2
+        elif isinstance(feat, _CouplingFeature):
+            feature_width = feat.length / 2
         else:
             raise ValueError("不支持的特征类型。")
 
@@ -695,17 +897,21 @@ class Shaft:
         (1000, 1250): 20,  (1250, 1600): 25,
     }
 
-    @staticmethod
-    def _get_chamfer_radius(diameter):
+    def _get_chamfer_radius(self, diameter):
+        if self is not None and self.cr is not None:
+            return self.cr
         for k, v in Shaft.CR_TABLE.items():
             if k[0] < diameter <= k[1]:
                 return v
-        warnings.warn(f"直径 {diameter} 超出了倒角半径计算的范围。", BadDesignWarning)
+        warnings.warn(f"直径 {diameter} 超出了倒角半径计算的范围。",
+                      BadDesignWarning)
 
     def __init__(self, init_diam):
         self.initial_diameter = init_diam
         self.length = None
         self.steps: list[_StepFeature] = []
+
+        self.cr = self._get_chamfer_radius(self.initial_diameter)
 
         self.contour = []            # 原始轮廓
         self.chamfered_contour = []  # 倒角处理后的轮廓
@@ -719,6 +925,21 @@ class Shaft:
         self.keyways: list[tuple[float, Keyway, float, bool]] = []
         self.bearings: list[tuple[float, Bearing, bool]] = []
         self.bushings: list[tuple[float, Bushing]] = []
+
+    def get_ends(self, start=True):
+        if start:
+            return _StartFeature(0)
+        else:
+            return _EndFeature(-1)
+
+    def end_at(self, pos, diameter=None):
+        self.process_features()
+        if pos < self.length:
+            raise ValueError
+        if diameter is None:
+            diameter = self._get_diameter_at(pos, False)
+        self.add_step(pos, diameter=diameter)
+        return _EndFeature(pos)
 
     def add_step(self, position, height=None, diameter=None):
         if height is not None:
@@ -736,9 +957,13 @@ class Shaft:
             warnings.warn(f"{position} 处的肩部过窄，一般应大于高度的 1.4 倍。",
                           BadDesignWarning)
         d = self._get_diameter_at(position, False)
-        if not 0.07 * d <= height <= 0.1 * d:
+        if not height > self.cr:
             warnings.warn(
-                f"{position} 处的肩部高度 {height} 不在推荐范围 ({0.07 * d}, {0.1 * d}) 内。",
+                f"{position} 处的肩部高度 {height} 小于圆角，产生干涉！",
+                BadDesignWarning)
+        if not height > d * 0.08:
+            warnings.warn(
+                f"{position} 处的肩部高度 {height} 过低",
                 BadDesignWarning)
 
         self.need_refresh = True  # 需要重新计算轮廓
@@ -746,22 +971,37 @@ class Shaft:
         self.steps.append(_StepFeature(position + width, -height, False))
         return _ShoulderFeature(position, width)
 
-    def add_bushing(self, feat, height, width, put_side=PutSide.BEFORE):
-        offset = _get_offset(feat, width / 2, put_side)
+    def add_bushing(self, feat, bs: BushingShape,
+                    put_side=PutSide.BEFORE, forward=True):
+        offset = _get_offset(feat, bs.length / 2, put_side)
         pos = feat.position + offset
         d1 = self._get_diameter_at(pos, False)
-        self.bushings.append((pos, Bushing(d1, d1 + height * 2, width)))
-        return _BushingFeature(pos, height, width)
+        bu = Bushing(d1, bs.d2, bs.length)
+        if bs.rise_pos is not None:
+            rpos = bs.rise_pos
+            if bs.pos_abs:
+                rpos = rpos - pos - bs.length / 2
+            bu.rise = (rpos, bs.rise_diam, bs.rise_length)
+        self.bushings.append((pos, bu, forward))
+        return _BushingFeature(pos, bs.length, (bs.d2 - d1) / 2)
 
     def add_keyway(self, feat, length, forward=True):
-        if isinstance(feat, (_GearFeature,)):
+        if isinstance(feat, _GearFeature):
             pos = feat.position
             bold = feat.gear.half_bold * 2
+        elif isinstance(feat, _CouplingFeature):
+            pos = feat.position
+            bold = feat.length
         else:
             raise ValueError("不支持的特征类型。")
         self.keyways.append((pos, Keyway(
             length, self._get_diameter_at(pos, False)
         ), bold, forward))
+
+    def add_coupling(self, feat, length):
+        pos = _get_offset(feat, length / 2, None)
+        pos = pos + feat.position
+        return _CouplingFeature(pos, length)
 
     def add_gear(self, pos_or_feat, gear: Gear,
                  forward=True, put_side=PutSide.BEFORE):
@@ -774,7 +1014,7 @@ class Shaft:
 
     def add_bearing(self, feat, bearing: Bearing,
                     forward=True, put_side=PutSide.BEFORE):
-        if not isinstance(feat, _BushingFeature):
+        if not isinstance(feat, (_BushingFeature, _StepFeature)):
             raise NotImplementedError(f"不支持的特征类型: {type(feat)}")
         bearing.check_attach(feat.height)
         pos = feat.position + _get_offset(
@@ -810,7 +1050,7 @@ class Shaft:
         # 检查所有零件是否定位良好
         step_pos = tuple(map(lambda x: x.position, self.steps)) +\
             sum(((pos - bu.length / 2, pos + bu.length / 2)
-                 for pos, bu in self.bushings), ())
+                 for pos, bu, _ in self.bushings), ())
         for pos, g, _ in self.gears:
             if not (
                 pos + g.half_bold in step_pos or
@@ -866,7 +1106,6 @@ class Shaft:
             self.contour[-1] = (pos - 1, d)
             self.contour.append((pos, d - 2))
         self.chamfer_mode['chamfer'] = do_chamfer
-
         # 倒角处理
         if do_fillet:
             self._apply_chamfers(num_pt_per_arc)
@@ -886,7 +1125,7 @@ class Shaft:
                 # 转换为半径单位进行计算
                 r0, r1 = d0 / 2, d1 / 2
                 delta_r = r1 - r0
-                fradius = Shaft._get_chamfer_radius(min(r0, r1))
+                fradius = Shaft._get_chamfer_radius(None, min(r0, r1))
 
                 # 内侧
                 cx = x0 - np.sign(delta_r) * fradius
@@ -930,7 +1169,8 @@ class Shaft:
     def _draw_half_contour(self, drawer: Drawer):
         drawer.switch_layer(LayerType.SOLID)
         path = Path2D((0, 0))
-        for segment in self.chamfered_contour:
+        path.goto(self.chamfered_contour[0])
+        for segment in self.chamfered_contour[1:]:
             if isinstance(segment, Fillet):
                 path.draw(drawer)
                 path = None
@@ -941,6 +1181,10 @@ class Shaft:
                 if path is None:
                     path = Path2D(segment)
                 else:
+                    if path.points[-1][0] == segment[0]:
+                        # print(path.points[-1], segment)
+                        drawer.line(path.points[-1],
+                                    (segment[0], 0))
                     path.goto(segment)
         path.goto(self.length, 0)
         path.draw(drawer)
@@ -982,11 +1226,391 @@ class Shaft:
             with drawer.transformed(mirrored_axis='x'):
                 self._draw_half_contour(drawer)
 
-            for pos, bushing in self.bushings:
-                bushing.draw(
-                    drawer, (pos, 0), (0, 1))
+            for pos, bushing, forward in self.bushings:
+                bushing.draw(drawer, (pos, 0),
+                             (0, 1) if forward else (0, -1))
 
             for pos, keyway, bold, forward in self.keyways:
                 keyway.draw(
                     drawer, (pos, 0),
                     (-1, 0) if forward else (1, 0), bold)
+
+
+class BoltHead:
+    eA = [3.41, 4.32, 5.45, 6.01, 6.58, 7.66, 8.79, 11.05, 14.38, 17.77,
+          20.03, 23.36, 26.75, 30.14, 33.53, 37.72, 39.98, None, None,
+          None, None, None, None, None, None, None, None, None, None]
+    eB = [3.28, 4.18, 5.31, 5.88, 6.44, 7.5, 8.63, 10.89, 14.2, 17.59, 19.85,
+          22.78, 26.17, 29.56, 32.95, 37.29, 39.55, 45.2, 50.85, 55.37, 60.79,
+          66.44, 71.3, 76.95, 82.6, 88.25, 93.56, 99.21, 104.86]
+    kA = [1.225, 1.525, 1.825, 2.125, 2.525, 2.925, 3.65, 4.15, 5.45,
+          6.58, 7.68, 8.98, 10.18, 11.715, 12.715, 14.215, 15.215, None,
+          None, None, None, None, None, None, None, None, None, None]
+    kB = [1.3, 1.6, 1.9, 2.2, 2.6, 3, 3.74, 4.24, 5.54, 6.69, 7.79,
+          9.09, 10.29, 11.85, 12.85, 14.35, 15.35, 17.35, 19.12, 21.42,
+          22.92, 25.42, 26.42, 28.42, 30.42, 33.5, 35.5, 38.5]
+
+    @staticmethod
+    def get_nominal_parameters(nominal_diameter: int):
+        # 公称直径列表（处理后）
+        nominal_diameters = [
+            'Φ1.6', 'Φ2', 'Φ2.5', 'Φ3', 'Φ4', 'Φ5', 'Φ6', 'Φ8', 'Φ10', 'Φ12',
+            'Φ14', 'Φ16', 'Φ18', 'Φ20', 'Φ22', 'Φ24', 'Φ27', 'Φ30', 'Φ33',
+            'Φ36', 'Φ39', 'Φ42', 'Φ45', 'Φ48', 'Φ52', 'Φ56', 'Φ60', 'Φ64'
+        ]
+        # d的最小值列表（公称值）
+        d_values = [
+            1.7, 2.2, 2.7, 3.2, 4.3, 5.3, 6.4, 8.4, 10.5, 13,
+            15, 17, 19, 21, 23, 25, 28, 31, 34, 37, 42, 45, 48,
+            52, 56, 62, 66, 70
+        ]
+        # dc的最大值列表（公称值）
+        dc_values = [
+            4, 5, 6, 7, 9, 10, 12, 16, 20, 24, 28, 30, 34, 37, 39,
+            44, 50, 56, 60, 66, 72, 78, 85, 92, 98, 105, 110, 115
+        ]
+        # h的公称值列表
+        h_values = [
+            0.3, 0.3, 0.5, 0.5, 0.8, 1, 1.6, 1.6, 2, 2.5,
+            2.5, 3, 3, 3, 3, 4, 4, 4, 5, 5, 6, 8, 8, 8, 8, 10, 10, 10
+        ]
+        # 创建字典存储数据
+        data = {}
+        for i, dia in enumerate(nominal_diameters):
+            data[dia] = {
+                'd': d_values[i],
+                'dc': dc_values[i],
+                'h': h_values[i]
+            }
+
+        # 处理输入的公称直径
+        cleaned_input = f'Φ{nominal_diameter}'
+
+        if cleaned_input in data:
+            return data[cleaned_input]
+        else:
+            raise ValueError(f"未找到公称直径为 {nominal_diameter} 的参数")
+
+    # 螺栓直径列表
+    bolt_diameters = ["M1.6", "M2", "M2.5", "M3", "(M3.5)", "M4", "M5", "M6", "M8", "M10",
+                      "M12", "(M14)", "M16", "(M18)", "M20", "(M22)", "M24", "(M27)", "M30",
+                      "(M33)", "M36", "(M39)", "M42", "(M45)", "M48", "(M52)", "M56", "(M60)",
+                      "M64"]
+
+    def __init__(self, sz, t='A'):
+        # 提取螺栓直径中的数字部分
+        self.numeric_diameters = []
+        for diameter in self.bolt_diameters:
+            # 去除括号和字母 M，然后转换为浮点数
+            clean_diameter = diameter.replace(
+                "(", "").replace(")", "").replace("M", "")
+            self.numeric_diameters.append(float(clean_diameter))
+
+        index = self.numeric_diameters.index(sz)
+        self.eA = self.eA[index]
+        self.eB = self.eB[index]
+        self.kA = self.kA[index]
+        self.kB = self.kB[index]
+
+        self.d = sz
+        self.e = self.eA if t == 'A' else self.eB
+        self.k = self.kA if t == 'A' else self.kB
+
+    def draw(self, drawer: Drawer,
+             center: ndarray, direction: ndarray):
+        theta = np.arctan2(direction[1], direction[0]) - np.pi / 2
+        with drawer.transformed(center, theta):
+            lt = (-self.e / 2, self.k)
+            rb = (self.e / 2, 0)
+            drawer.wipeout_rect(lt, rb)
+            drawer.rect(lt, rb)
+            drawer.line((-self.e / 4, 0), (-self.e / 4, self.k))
+            drawer.line((self.e / 4, 0), (self.e / 4, self.k))
+
+    def draw_top(self, drawer: Drawer,
+                 center: ndarray, direction: ndarray):
+        theta = np.arctan2(direction[1], direction[0]) - np.pi / 2
+        with drawer.transformed(center, theta):
+            cir_pts = np.linspace(0, np.pi * 2)
+            cir_pts = np.array([np.cos(cir_pts), np.sin(cir_pts)])
+            cir_pts = cir_pts.T * self.e
+            drawer.wipeout(*cir_pts)
+            c = drawer.circle((0, 0), self.e)
+            drawer.hexagonal((0, 0), self.e, 0)
+
+
+class OilPointer:
+    def __init__(self, diameter):
+        if diameter == 10:
+            self.d0 = 16  # 螺纹直径
+            self.p0 = 1.5  # 螺距
+            self.dc = 22  # 挡盘直径
+            self.s = 21  # 六角头尺寸
+            self.H = 22
+            self.h = 8
+        elif diameter == 20:
+            self.d0 = 27  # 螺纹直径
+            self.p0 = 1.5  # 螺距
+            self.dc = 36  # 挡盘直径
+            self.s = 32  # 六角头尺寸
+            self.H = 30
+            self.h = 10
+        elif diameter == 32:
+            self.d0 = 42  # 螺纹直径
+            self.p0 = 1.5  # 螺距
+            self.dc = 52  # 挡盘直径
+            self.s = 46  # 六角头尺寸
+            self.H = 40
+            self.h = 12
+        else:
+            raise ValueError('错误直径')
+        self.d = diameter  # 指示器直径
+        self.df = self.d0 - 1.22687 * self.p0  # 指示器螺纹内径
+
+    def draw(self, drawer: Drawer,
+             center_pos: ndarray,
+             direction: ndarray):
+        if not isinstance(center_pos, ndarray):
+            center_pos = np.array(center_pos, dtype=np.floating)
+
+        drawer.switch_layer(LayerType.SOLID)
+        theta = np.arctan2(direction[1], direction[0]) - np.pi / 2
+        with drawer.transformed(center_pos, theta):
+            arc1 = drawer.arc3((-self.dc / 2 + 1, self.H / 4),
+                               (0, self.H - self.h),
+                               (self.dc / 2 - 1, self.H / 4))
+            path = Path2D((-self.dc / 2 + 1, self.H / 4))
+            path.offset(-1, -1)
+            path.goto(-self.dc / 2, 0)
+            path.goto(-self.d0 / 2, 0)
+            path.offset(0, -self.h + 1)
+            path.offset(1, -1)
+            path.offset(self.d0 - 2, 0)
+            path.offset(1, 1)
+            path.offset(0, self.h - 1)
+            path.goto(self.dc / 2, 0)
+            path.offset(0, self.H / 4 - 1)
+            path.offset(-1, 1)
+            outer = path.draw(drawer)
+            ipath = Path2D((-self.d / 2, self.H / 3))
+            ipath.goto(-self.d / 2, -self.h)
+            ipath.goto(self.d / 2, -self.h)
+            ipath.goto(self.d / 2, self.H / 3)
+            inner = ipath.draw(drawer)
+            arc2 = drawer.arc((0, self.H / 3), self.d / 2,
+                              0, 180)
+            drawer.hatch([outer, arc1], inner_objs=[[arc2, inner]],
+                         hatch_type=HatchType.GLASS)
+            arc1.Delete()
+            outer.Delete()
+            arc2.Delete()
+            inner.Delete()
+            drawer.arc3((-self.dc / 2 + 1, self.H / 4),
+                        (0, self.H - self.h),
+                        (self.dc / 2 - 1, self.H / 4))
+            path.draw(drawer)
+            ipath.draw(drawer)
+            drawer.arc((0, self.H / 3), self.d / 2,
+                       0, 180)
+            drawer.line((-self.d0 / 2, 0), (-self.df / 2, 0))
+            drawer.line((self.d0 / 2, 0), (self.df / 2, 0))
+            lt = (-self.dc / 2, 0)
+            rb = (-self.d0 / 2, -1)
+            drawer.hatch(drawer.rect(lt, rb), hatch_type=HatchType.SOLID)
+            lt = (self.dc / 2, 0)
+            rb = (self.d0 / 2, -1)
+            drawer.hatch(drawer.rect(lt, rb), hatch_type=HatchType.SOLID)
+            drawer.switch_layer(LayerType.THIN)
+            drawer.line((-self.df / 2, 0), (-self.df / 2, -self.h))
+            drawer.line((self.df / 2, 0), (self.df / 2, -self.h))
+
+
+class ViewPort(Enum):
+    TOP2BOTTOM = 1
+    LEFT2RIGHT = 2
+
+
+class Box:
+    FOOT_BOLT = {
+        'a': ((100, 150, 200, 250, 300, 350, 400, 450,
+               500, 600, 700, 800, 900, 1000),
+              (250, 350, 425, 500, 600, 650, 750, 850,
+               1000, 1150, 1300, 1500, 1700, 2000),
+              (500, 650, 750, 825, 950, 1100, 1250,
+               1450, 1650, 1900, 2150)),
+        'size': ((16, 16, 16, 20, 24, 24, 30, 30, 36, 36, 42, 42, 48, 48),
+                 (20, 20, 20, 24, 24, 30, 30, 36, 36, 42, 42, 48, 48, 56),
+                 (20, 24, 24, 30, 30, 36, 36, 42, 42, 48, 48)),
+        'n': ((4, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,),
+              (6, 6, 6, 8, 8, 8, 8, 8, 8, 8, 8, 10, 10, 10),
+              (8, 8, 10, 10, 10, 10, 10, 10, 10, 10, 10))
+    }
+
+    @staticmethod
+    def _get_bolt_flange(d: int, is_feet: bool):
+        if is_feet:
+            # 螺栓孔凸缘的配置尺寸
+            ind = [6, 8, 10, 12, 16, 20, 22, 24, 27, 30]
+            C1 = [12, 15, 18, 2, 26, 30, 36, 36, 40, 42]
+            C2 = [10, 13, 14, 18, 21, 26, 30, 30, 34, 36]
+            D0 = [15, 20, 25, 30, 40, 45, 48, 48, 55, 60]
+            rmax = [3, 3, 4, 4, 5, 5, 8, 8, 8, 8]
+        else:
+            # 地脚螺栓孔凸缘的配置尺寸
+            ind = [16, 20, 22, 24, 27, 30, 36, 42, 48, 56]
+            C1 = [25, 30, 35, 50, 55, 60, 70, 95]
+            C2 = [22, 25, 30, 50, 58, 60, 70, 95]
+            D0 = [45, 48, 60, 85, 100, 110, 130, 170]
+            rmax = [np.inf for i in range(len(ind))]
+        ind = ind.index(d)
+        return C1[ind], C2[ind], D0[ind], rmax[ind]
+
+    B1_SCALE: tuple = (0.8, 0.85)
+    H0_SCALE: tuple = (1.5, 1.75)
+    H1_SCALE: tuple = (1.5, 1.75)
+    H2_SCALE: tuple = (1.5, 1.75)
+    H4_SCALE: tuple = (1.75, 2)
+    H5_SCALE: tuple = (2, 3)
+    E_SCALE: tuple = (0.8, 0.1)
+    E1_SCALE: tuple = (0.8, 0.85)
+    D_SCALE: tuple = (1.5, 2)
+    D3_SCALE: tuple = (0.5, 0.6)
+    D5_SCALE: tuple = (0.3, 0.4)
+    H_PLUS_SCALE: tuple = (30, 50)
+    L1_PLUS_SCALE: tuple = (5, 10)
+
+    def _calc_all_scales(self):
+        scale = self.scale
+        for attr in Box.__annotations__:
+            if attr.endswith("_SCALE"):
+                min_scale, max_scale = getattr(self, attr)
+                setattr(self, attr, min_scale +
+                        (max_scale - min_scale) * scale)
+
+    def _calc_cover_l(self, c1, c2):
+        '''箱盖和箱盖凸缘宽度计算'''
+        return round(c1 + c2 + self.L1_PLUS_SCALE)
+
+    def __init__(self, gears, bearings, scale=0.5):
+        if not 0 <= scale <= 1:
+            raise ValueError("比例系数必须在 0 到 1 之间。")
+        self.scale = scale
+        self._calc_all_scales()
+
+        self.gears, self.bearings = gears, bearings
+        self.aI = self.gears[0].ra + self.gears[1].ra  # 高速级中心距
+        self.aII = self.gears[3].ra + self.gears[2].ra  # 低速级中心距
+        Ds = [b.da for b in self.bearings]  # 轴承外径
+
+        self.b = round(max(0.025 * self.aII + 3, 8))  # 底座壁厚δ
+        self.b1 = round(min(self.b * self.B1_SCALE, 8))  # 箱体壁厚δ₁
+        self.h0 = round(self.b * self.H0_SCALE)  # 底座上部凸缘厚度h₀
+        self.h1 = round(self.b1 * self.H1_SCALE)  # 箱盖凸缘厚度h₁
+        self.h2 = round(self.b * self.H2_SCALE)  # 底座下部凸缘厚度h₂、h₃、h₄
+        self.h3 = round(self.b * 1.5)  # 底座下部凸缘厚度h₂、h₃、h₄
+        self.h4 = round(self.h3 * self.H4_SCALE)  # 底座下部凸缘厚度h₂、h₃、h₄
+        self.h6 = None  # 吊环螺栓座凸缘高度h₆
+        self.e = round(self.b * self.E_SCALE)  # 底座加强筋厚度e
+        self.e1 = round(self.b * self.E1_SCALE)  # 箱盖加强筋厚度e₁
+        if self.aII in Box.FOOT_BOLT['a'][1]:
+            idx = Box.FOOT_BOLT['a'][1].index(self.aII)
+        else:
+            d_feet = self.b * self.D_SCALE
+            most_close = min(Box.FOOT_BOLT['size']
+                             [1], key=lambda x: abs(x - d_feet))
+            idx = Box.FOOT_BOLT['size'][1].index(most_close)
+        self.n_feet = Box.FOOT_BOLT['n'][1][idx]  # 地脚螺栓数目nf
+        if self.n_feet != 6:
+            raise NotImplementedError
+        self.d_feet = Box.FOOT_BOLT['size'][1][idx]  # 地脚螺栓直径d
+        self.d2 = round(self.d_feet * 0.75)  # 轴承座连接螺栓直径d₂
+        self.h5 = round(self.d2 * 2 * self.H5_SCALE)  # 轴承座连接螺栓凸缘厚度h₅
+        self.d3 = round(self.d_feet * self.D3_SCALE)  # 底座与箱盖连接螺栓直径d₃
+        self.d5 = round(self.d_feet * self.D5_SCALE)  # 视孔盖固定螺栓直径d₅
+        self.d6 = round(0.8 * self.d_feet)  # 吊环螺栓直径d₈
+
+        # 铸造壁相交部分的尺寸
+        if 10 <= self.b < 15:
+            self.X, self.Y, self.R = 3, 15, 5
+        elif 15 <= self.b < 20:
+            self.X, self.Y, self.R = 4, 20, 5
+        elif 20 <= self.b < 25:
+            self.X, self.Y, self.R = 5, 25, 5
+        elif 25 <= self.b < 30:
+            self.X, self.Y, self.R = 6, 30, 8
+        elif 30 <= self.b <= 35:
+            self.X, self.Y, self.R = 7, 35, 10  # R >= 8 可
+        else:
+            warnings.warn(f"壁厚 {self.b} 超出了给定的范围",
+                          BadDesignWarning)
+            if self.b <= 0:
+                self.X, self.Y, self.R = 3, 15, 5
+            else:
+                self.X, self.Y, self.R = 7, 35, 12
+
+        # 箱体内壁和齿顶的间隙
+        self.delta = round(self.b * 1.2 + 0.5)
+        self.delta1 = 15  # 箱体内壁与齿轮端面的间隙
+        # 底座深度
+        self.H = round(self.gears[1].ra + self.H_PLUS_SCALE)
+        self.H1 = max(self.aI, self.aII)  # 底座高度
+
+        # 其他圆角半径
+        self.r1 = round(0.25 * self.h3)
+        self.r2 = self.h3
+
+        g1, g2 = self.gears[0], self.gears[-1]
+        self.length = self.aI + self.aII + g1.ra + g2.ra + self.delta * 2
+        width = sum(map(lambda g: g.half_bold, self.gears))
+        self.width = self.delta1 * 3 + width
+
+    def _draw_bottom_layer0_half(self, drawer: Drawer):
+        halfl = self.length / 2
+        dc = BoltHead.get_nominal_parameters(self.d_feet)
+        dc = dc['dc']
+        # C1 内侧， C2 外侧
+        c1, c2, d0, rm = self._get_bolt_flange(self.d_feet, True)
+        yoff = self.width / 2 + c1 + c2 + self.b
+        with drawer.transformed((0, -yoff)):
+            drawer.line((halfl, c1 + c2 + c2),
+                        (halfl, c2))
+            drawer.arc((halfl - c2, c2 * 2 + c1), c2,
+                       0, -90)
+            drawer.arc((halfl - c2, c2), c2,
+                       0, -90)
+            drawer.line((halfl - c2, 0), (0, 0))
+            drawer.circle((halfl - dc, c2), dc / 2)
+            drawer.circle((halfl - dc, c2), self.d_feet / 2)
+            drawer.arc((0, c2), dc / 2,
+                       -90, 90)
+            drawer.arc((0, c2), self.d_feet / 2,
+                       -90, 90)
+
+            with drawer.transformed((halfl / 2, (c1 + c2) / 2)):
+                xoff, yoff = self.e / 2, (c1 + c2) / 2 - self.r1
+                path = Path2D((-xoff, yoff))
+                path.offset(0, -yoff)
+                path.offset(xoff * 2, 0)
+                path.offset(0, yoff)
+                path.draw(drawer)
+                drawer.arc((xoff + self.r1, yoff), self.r1,
+                           180, 90)
+                drawer.arc((-xoff - self.r1, yoff), self.r1,
+                           0, 90)
+                yoff = yoff + self.r1
+                drawer.line((-halfl / 2, yoff), (-xoff - self.r1, yoff))
+                drawer.line((halfl / 2 - c2, yoff), (xoff + self.r1, yoff))
+
+    def _draw_bottom_layer0(self, drawer: Drawer):
+        self._draw_bottom_layer0_half(drawer)
+        with drawer.transformed(mirrored_axis='y'):
+            self._draw_bottom_layer0_half(drawer)
+
+    def draw(self, drawer: Drawer, view: ViewPort,
+             center: ndarray, dir: ndarray):
+        theta = np.arctan2(dir[1], dir[0]) - np.pi / 2
+        if view == ViewPort.TOP2BOTTOM:
+            with drawer.transformed(center, theta):
+                self._draw_bottom_layer0(drawer)
+                with drawer.transformed(mirrored_axis='x'):
+                    self._draw_bottom_layer0(drawer)

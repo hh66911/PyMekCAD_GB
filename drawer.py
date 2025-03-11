@@ -125,6 +125,8 @@ class LayerType(Enum):
 class HatchType(Enum):
     SOLID = 'SOLID'
     NORMAL = 'ANSI31'
+    GLASS = 'ANSI33'
+    RUBBER = 'ANSI37'
 
 
 class Transform:
@@ -182,6 +184,8 @@ class Drawer:
 
         print('关闭 WIPEOUT 边框')
         self.doc.SendCommand('wipeout f off ')
+        print('lt = 0.5')
+        self.doc.SendCommand('ltscale 0.5 ')
 
     def transformed(self, translation=(0, 0),
                     theta=0., mirrored_axis=None, tr=None):
@@ -265,6 +269,91 @@ class Drawer:
         ), start=())
         return self.view.AddPolyline(aDouble(pt_seq))
 
+    def hexagonal(self, center, a, angle):
+        angle_offset = np.deg2rad(angle)
+        points = []
+        for i in range(6):
+            theta = angle_offset + i * np.pi / 3
+            x = center[0] + a * np.cos(theta)
+            y = center[1] + a * np.sin(theta)
+            points.append((x, y))
+        points.append(points[0])  # Close the hexagon
+        points = self._transformed_points(*points)
+        points = sum((to_xyz(pt) for pt in points), ())
+        return self.view.AddPolyline(aDouble(points))
+
+    def circle3(self, pt1, pt2, pt3):
+        x1, y1, z1 = to_xyz(pt1)
+        x2, y2, z2 = to_xyz(pt2)
+        x3, y3, z3 = to_xyz(pt3)
+        if z1 != z2 or z1 != z3:
+            raise ValueError('非平面圆！')
+        # calc center:
+        a = 2 * (x2 - x1)
+        b = 2 * (y2 - y1)
+        c = x2 ** 2 + y2 ** 2 - x1 ** 2 - y1 ** 2
+        d = 2 * (x3 - x1)
+        e = 2 * (y3 - y1)
+        f = x3 ** 2 + y3 ** 2 - x1 ** 2 - y1 ** 2
+        x = (b * f - e * c) / (b * d - e * a)
+        y = (d * c - a * f) / (b * d - e * a)
+        # calc radius:
+        r = np.sqrt((x - x1) ** 2 + (y - y1) ** 2)
+        return self.circle((x, y, z1), r)
+    
+    def arc3(self, p1, p2, p3, direction='clockwise'):
+        """
+        使用三点坐标计算圆心，并得到按一定旋转方向包含这三点的弧的起始角度和终止角度。
+
+        参数:
+        p1, p2, p3 : tuple
+            三个点的坐标，每个点是一个元组 (x, y)。
+        direction : str, optional
+            旋转方向，'clockwise' 表示顺时针，'counterclockwise' 表示逆时针。默认为 'clockwise'。
+
+        返回:
+        center : tuple
+            圆心坐标 (x, y)。
+        start_angle, end_angle : float
+            弧的起始角度和终止角度，单位为弧度。
+        """
+
+        # 计算圆心坐标
+        A = p2[0] - p1[0]
+        B = p2[1] - p1[1]
+        C = p3[0] - p1[0]
+        D = p3[1] - p1[1]
+        E = A * (p1[0] + p2[0]) + B * (p1[1] + p2[1])
+        F = C * (p1[0] + p3[0]) + D * (p1[1] + p3[1])
+        G = 2 * (A * (p3[1] - p2[1]) - B * (p3[0] - p2[0]))
+
+        if G == 0:
+            raise ValueError("三点共线，无法确定圆心")
+
+        center_x = (D * E - B * F) / G
+        center_y = (A * F - C * E) / G
+        center = (center_x, center_y)
+        print(center, p1, p2, p3)
+
+        # 计算每个点相对于圆心的角度
+        def get_angle(point):
+            dx = point[0] - center[0]
+            dy = point[1] - center[1]
+            return np.arctan2(dy, dx)
+
+        angles = sorted([get_angle(p1), get_angle(p2), get_angle(p3)])
+
+        # 确定弧的起始角度和终止角度
+        if direction == 'clockwise':
+            start_angle, end_angle = angles[-1], angles[0]
+        elif direction == 'counterclockwise':
+            start_angle, end_angle = angles[0], angles[-1]
+        else:
+            raise ValueError("无效的旋转方向")
+        
+        return self.arc(center, np.linalg.norm(np.array(p1) - np.array(center)),
+                 np.rad2deg(start_angle), np.rad2deg(end_angle))
+
     def polyline(self, *pts_list):
         pts = sum((
             tuple(pt) if isinstance(pt[0], (tuple, list))
@@ -317,7 +406,7 @@ class Drawer:
         return self.wipeout(*pts)
 
     def hatch(self, *outer_objs, inner_objs=None,
-              hatch_type=HatchType.NORMAL, width=0.5):
+              hatch_type=HatchType.NORMAL, width=1):
         hatch = self.view.AddHatch(0, hatch_type.value, True)
         hatch.ISOPenWidth = width * 100.
         for o in outer_objs:
