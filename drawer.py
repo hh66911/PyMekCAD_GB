@@ -334,7 +334,7 @@ class Drawer:
         center_x = (D * E - B * F) / G
         center_y = (A * F - C * E) / G
         center = (center_x, center_y)
-        print(center, p1, p2, p3)
+        # print(center, p1, p2, p3)
 
         # 计算每个点相对于圆心的角度
         def get_angle(point):
@@ -360,6 +360,8 @@ class Drawer:
             tuple(pt) if isinstance(pt[0], (tuple, list, ndarray))
             else (pt,) for pt in pts_list
         ), start=())
+        if len(pts) < 2:
+            raise ValueError('过少的点')
         pts = self._transformed_points(*pts)
         pts = sum((
             to_xyz(pt) for pt in pts
@@ -456,6 +458,10 @@ class Arc2D:
         self.a1 = np.rad2deg(a1) if is_rad else a1
         self.a2 = np.rad2deg(a2) if is_rad else a2
         self.r = r
+        self.end = self.c + self.r * np.array((
+            np.cos(np.deg2rad(self.a2)),
+            np.sin(np.deg2rad(self.a2))
+        ))
 
     def to_pts(self, num=100):
         angles = np.linspace(self.a1, self.a2, num=num)
@@ -480,7 +486,7 @@ class Path2D:
     def __str__(self):
         fmt_pts = ' -> '.join([f'({p[0]: .2f}, {p[1]: .2f})' for p in self.points])
         return f'{fmt_pts}'
-
+    
     def offset(self, x_or_seq, y=None):
         off = None
         if y is not None:
@@ -492,22 +498,27 @@ class Path2D:
             
         if self.temp_pos is None:
             self.points.append(self.points[-1] + off)
+            return self.points[-1]
         else:
             self.temp_pos = self.temp_pos + off
+            return self.temp_pos
 
     def goto(self, x_or_seq, y=None):
         pt = None
         if y is not None:
             pt = np.array((x_or_seq, y))
         elif not isinstance(x_or_seq, ndarray):
-            if len(x_or_seq) < 2:
-                raise ValueError('point维数不对')
             pt = np.array(x_or_seq)
-            
+        else:
+            pt = x_or_seq
+        if len(pt) < 2:
+            raise ValueError('point维数不对')
         if self.temp_pos is None:
             self.points.append(pt)
+            return self.points[-1]
         else:
             self.temp_pos = pt
+            return self.temp_pos
 
     def draw(self, drawer: Drawer):
         if len(self.points) == 2:
@@ -516,13 +527,14 @@ class Path2D:
         pts = []
         for p in self.points:
             if isinstance(p, Arc2D):
-                result.append(p.draw(drawer))
                 if len(pts) > 0:
                     if len(pts) == 2:
                         result.append(drawer.line(pts[0], pts[1]))
-                    else:
+                    elif len(pts) > 2:
                         result.append(drawer.polyline(pts))
                     pts.clear()
+                result.append(p.draw(drawer))
+                # pts.append(p.end)
             else:
                 pts.append(p)
         if len(pts) > 1:
@@ -539,20 +551,22 @@ class Path2D:
         ), start=())
         return drawer.wipeout(*points)
 
-    def arc(self, r, angle, is_left=True):
+    def arc(self, r, angle, is_left=True, tang=None):
         if len(self.points) < 2:
             raise ValueError('不够一条线')
         vec = np.array((0, 0, 1))
         vec = vec if is_left else -vec
-        vecl = self.points[-1] - self.points[-2]
-        vecl = to_vec(vecl, dim=3)
-        vecr = np.cross(vec, vecl)[0]
+        if tang is None:
+            tang = self.points[-1] - self.points[-2]
+        tang = to_vec(tang, dim=3)
+        vecr = np.cross(vec, tang)[0]
         vecr = vecr / np.linalg.norm(vecr)
         cen = self.points[-1] + vecr[:2] * r
         t0 = np.arctan2(-vecr[1], -vecr[0])
         t1 = t0 + np.deg2rad(angle if is_left else -angle)
         self.points.append(Arc2D(cen, r, t0, t1, True))
         self.points.append(cen + (r * np.cos(t1), r * np.sin(t1)))
+        return self.points[-1]
 
     def up(self):
         if self.temp_pos is None:
