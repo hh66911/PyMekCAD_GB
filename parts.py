@@ -395,9 +395,9 @@ class BearingCover:
         self.yoff1 = self.yoff - (self.B - self.b)
         self.yoff3 = (self.yoff - self.yoff1) / 2 + self.yoff2
         self.ccc = self.yoff1 + (self.yoff - self.yoff1) / 2
-        
+
         self.head = BoltHead(self.d3)
-        
+
     def _draw_close(self, drawer: Drawer):
         drawer.switch_layer(LayerType.SOLID)
         e = self.e___
@@ -424,7 +424,7 @@ class BearingCover:
                 right = path.draw(drawer)
             drawer.switch_layer(LayerType.THIN)
             drawer.hatch([left[0], right[0]])
-            
+
             drawer.switch_layer(LayerType.SOLID)
             drawer.hatch(drawer.rect(
                 (-self.D2 / 2, 0),
@@ -529,12 +529,17 @@ class BearingCover:
                 self._draw_close(drawer)
             e = self.e___ + 1
             if self.n == 4:
-                self.head.draw(drawer, (-self.D0 / 2 * np.cos(np.pi / 4), e), (0, 1))
-                self.head.draw(drawer, (self.D0 / 2 * np.cos(np.pi / 4), e), (0, 1))
+                self.head.draw(
+                    drawer, (-self.D0 / 2 * np.cos(np.pi / 4), e), (0, 1))
+                self.head.draw(
+                    drawer, (self.D0 / 2 * np.cos(np.pi / 4), e), (0, 1))
             elif self.n == 6:
-                self.head.draw(drawer, (-self.D0 / 2 * np.cos(np.pi / 6), e), (0, 1))
-                self.head.draw(drawer, (self.D0 / 2 * np.cos(np.pi / 6), e), (0, 1))
+                self.head.draw(
+                    drawer, (-self.D0 / 2 * np.cos(np.pi / 6), e), (0, 1))
+                self.head.draw(
+                    drawer, (self.D0 / 2 * np.cos(np.pi / 6), e), (0, 1))
                 self.head.draw(drawer, (0, e), (0, 1))
+
 
 @dataclass
 class DrawedGear:
@@ -705,12 +710,16 @@ class Keyway:
         7.4, 8.4, 9.4, 10.4, 11.4, 12.4, 12.4, 14.4, 15.4, 17.4, 19.5
     ]
 
+    def describe(self):
+        return f"键槽长 {self.length} mm，宽 {self.width} mm，深度 {self.height} mm。" +\
+            f"轴侧键槽深 {self.t_shaft} mm。配合半径 {self.r} mm。"
+
     def __init__(self, length, diameter, ktype=KeywayType.A):
         self.length = length
         self.r = diameter / 2
 
         if length > diameter * 1.6:
-            raise ValueError("长度超过了给定直径的最大允许长度。")
+            warnings.warn("长度超过了给定直径 1.6 倍。", BadDesignWarning)
 
         for idx, (min_d, max_d) in enumerate(Keyway.SIZE_LOOKUP_TABLE):
             if min_d <= diameter < max_d:
@@ -1307,7 +1316,7 @@ class Shaft:
                 keyway.draw(
                     drawer, (pos, 0),
                     (-1, 0) if forward else (1, 0), bold)
-                
+
             drawer.switch_layer(LayerType.DOTTED)
             drawer.line((-5, 0), (self.length + 5, 0))
 
@@ -1372,6 +1381,21 @@ class BoltHead:
                       "M12", "(M14)", "M16", "(M18)", "M20", "(M22)", "M24", "(M27)", "M30",
                       "(M33)", "M36", "(M39)", "M42", "(M45)", "M48", "(M52)", "M56", "(M60)",
                       "M64"]
+
+    @staticmethod
+    def get_most_close(diameter):
+        # 提取螺栓直径中的数字部分
+        numeric_diameters = []
+        for dd in BoltHead.bolt_diameters:
+            # 去除括号和字母 M，然后转换为浮点数
+            clean_diameter = dd.replace(
+                "(", "").replace(")", "").replace("M", "")
+            numeric_diameters.append(float(clean_diameter))
+
+        # 找到最接近的直径
+        closest_diameter = min(
+            numeric_diameters, key=lambda x: abs(x - diameter))
+        return closest_diameter
 
     def __init__(self, sz, t='A'):
         # 提取螺栓直径中的数字部分
@@ -1543,7 +1567,7 @@ class Box:
             rmax = [np.inf for i in range(len(ind))]
         val = min(ind, key=lambda x: abs(x - d))
         ind = ind.index(val)
-        return C1[ind], C2[ind], D0[ind], rmax[ind]
+        return C1[ind], C2[ind], D0[ind], rmax[ind], val
 
     B1_SCALE: tuple = (0.8, 0.85)
     H0_SCALE: tuple = (1.5, 1.75)
@@ -1668,6 +1692,9 @@ class Box:
         self.d5 = round(self.d_feet * self.D5_SCALE)  # 视孔盖固定螺栓直径d₅
         self.d6 = round(0.8 * self.d_feet)  # 吊环螺栓直径d₈
 
+        # 规约值
+        self.d5 = BoltHead.get_most_close(self.d5)
+
         # 铸造壁相交部分的尺寸
         if 10 <= self.b < 15:
             self.X, self.Y, self.R = 3, 15, 5
@@ -1703,10 +1730,10 @@ class Box:
         width = sum(map(lambda g: g.half_bold, self.gears))
         self.width = self.delta1 * 3 + width
 
-        self.c1, self.c2 = self._get_bolt_flange(self.d3, False)[:2]
+        self.c1, self.c2, _, _, self.d3 = self._get_bolt_flange(self.d3, False)
         self.l1 = self._calc_cover_l1(self.c1, self.c2)
         self.B = self.l1 + self.b
-        c1, c2, _, _ = self._get_bolt_flange(self.d_feet, True)
+        c1, c2, _, _, self.d_feet = self._get_bolt_flange(self.d_feet, True)
         self.c11, self.c21 = c1, c2
 
         self.oil_pointer: OilPointer = None
@@ -1721,13 +1748,13 @@ class Box:
         else:
             raise TypeError('未知物品')
 
-    def gen_shaft1(self, d, m=40):
+    def gen_shaft1(self, d, m=40, kl=90):
         shaft1 = Shaft(d)
         dd = round(0.07 * d + 1)
         b1 = self.bearings[0]
         d2 = round(b1.d + 2 * b1.inner_thick / 3)
         bc1 = BearingCover(b1.da, d + dd * 2, m, True)
-        
+
         pos1 = 38 + 10
         pos2 = pos1 + bc1.e
         pos3 = pos2 + 20
@@ -1745,23 +1772,23 @@ class Box:
         pos7 = pos8 - self.gears[0].half_bold * 2
         pos6 = pos7 - 10
         # print(m2, pos8, pos9, pos10, pos11, L)
-        
+
         shaft1.add_step(38, diameter=bc1.d1)
         shaft1.add_step(pos3, diameter=b1.d)
         st = shaft1.add_step(pos5, diameter=self.gears[0].r_hole * 2)
         sh = shaft1.add_shoulder(pos6, 10, 10)
         g = shaft1.add_gear(
             sh, self.gears[0], put_side=PutSide.AFTER)
-        shaft1.add_keyway(g, 40)
-        shaft1.add_step(pos8 - 2, -dd)
+        shaft1.add_keyway(g, kl)
+        shaft1.add_step(pos8 - 2, diameter=b1.d)
         shaft1.add_step(pos11 - 1, 0)
-        
+
         bu1 = shaft1.add_bushing(st, BushingShape(
             pos5 - pos4, b1.d + dd * 2, pos4_5 - 5,
             True, bc1.D, 5
         ), PutSide.BEFORE)
         shaft1.add_bearing(bu1, b1, False)
-        
+
         bu2 = shaft1.add_bushing(g, BushingShape(
             pos9 - pos8 - 3, b1.d + dd * 2,
             pos8, True, bc1.D,
@@ -1772,20 +1799,20 @@ class Box:
             True, bc1.D, 5
         ), PutSide.AFTER)
         shaft1.add_bearing(bu3, b1, True, PutSide.AFTER)
-        
+
         self.shafts[0] = shaft1
         self.bearing_covers[0] = (bc1, bc12)
         self.syoffs[0] = -(38 + 10 + bc1.e)
         return shaft1
 
-    def gen_shaft2(self, d, m=30):
+    def gen_shaft2(self, d, m=30, kl1=90, kl2=90):
         shaft2 = Shaft(d)
         dd = round(0.07 * d + 1)
         b2 = self.bearings[1]
         d2 = round(b2.d + b2.inner_thick)
         bc2 = BearingCover(b2.da, b2.d, m)
         print(b2.d)
-        
+
         g2 = self.gears[1]
         g3 = self.gears[2]
         lenbu = 20
@@ -1796,7 +1823,7 @@ class Box:
         pos5 = pos4 + self.delta1 + g2.half_bold * 2
         pos6 = pos5 + self.delta1
         pos7 = pos5 + lenbu
-        
+
         shaft2.add_step(pos3 + 2, diameter=g3.r_hole * 2)
         s1 = shaft2.add_step(pos4, 10)
         s2 = shaft2.add_step(pos4 + self.delta1 - 3, diameter=g2.r_hole * 2)
@@ -1804,9 +1831,9 @@ class Box:
         shaft2.add_step(pos7 + b2.b - 1, 0)
         g2 = shaft2.add_gear(s2, g2, True, PutSide.AFTER)
         g3 = shaft2.add_gear(s1, g3, put_side=PutSide.BEFORE)
-        shaft2.add_keyway(g2, 50)
-        shaft2.add_keyway(g3, 50)
-        
+        shaft2.add_keyway(g2, kl1)
+        shaft2.add_keyway(g3, kl2)
+
         bu1 = shaft2.add_bushing(g3, BushingShape(
             (pos3 - b2.b) / 3, d2, pos3 - 5,
             True, bc2.D, 5
@@ -1828,19 +1855,19 @@ class Box:
         m2 = self.B * 2 + self.width - m - pos7 - b2.b
         print(pos5)
         bc21 = BearingCover(b2.da, b2.d, m2)
-        
+
         self.shafts[1] = shaft2
         self.bearing_covers[1] = (bc2, bc21)
         self.syoffs[1] = bc2.m
         return shaft2
 
-    def gen_shaft3(self, d, m=18):
+    def gen_shaft3(self, d, m=18, kl=90):
         shaft3 = Shaft(d)
         dd = round(0.07 * d + 1)
         b3 = self.bearings[2]
         d2 = round(b3.d + 2 * b3.inner_thick / 3)
         bc3 = BearingCover(b3.da, b3.d, m)
-        
+
         g = self.gears[-1]
         pos1 = -m + self.B
         pos2 = pos1 + 6
@@ -1853,7 +1880,7 @@ class Box:
         pos7 = pos6 + self.B - m2 - b3.b
         pos8 = pos7 + b3.b
         pos9 = pos8 + m2 + bc31.e + 10
-    
+
         shaft3.add_step(pos3 + 2, diameter=g.r_hole * 2)
         s1 = shaft3.add_step(pos4, 10)
         shaft3.add_step(pos4 + self.delta1, diameter=g.r_hole * 2 + 5)
@@ -1865,7 +1892,7 @@ class Box:
         # print(pos7, pos8, pos9)
         # print(bc31.d1, d, b3.d)
         g = shaft3.add_gear(s1, g, put_side=PutSide.BEFORE)
-        shaft3.add_keyway(g, 63)
+        shaft3.add_keyway(g, kl)
 
         bu1 = shaft3.add_bushing(g, BushingShape(
             pos3 - pos2, b3.d + dd * 2, pos3 - 5,
@@ -1876,7 +1903,7 @@ class Box:
             True, bc3.D, 5
         ), PutSide.BEFORE)
         shaft3.add_bearing(bu2, b3, False)
-        
+
         bu3 = shaft3.add_bushing(st, BushingShape(
             pos7 - pos5, b3.d + dd * 2, pos6 - 2,
             True, bc3.D, 5
@@ -2023,9 +2050,9 @@ class Box:
                     drawer.switch_layer(LayerType.SOLID)
                     draw_doubleline((0, 0), bc.D, self.B)
 
-        pt_s1  = pt_s1 + (0, self.syoffs[0])
-        pt_s2  = pt_s2 + (0, self.syoffs[1])
-        pt_s3  = pt_s3 + (0, self.syoffs[2])
+        pt_s1 = pt_s1 + (0, self.syoffs[0])
+        pt_s2 = pt_s2 + (0, self.syoffs[1])
+        pt_s3 = pt_s3 + (0, self.syoffs[2])
         self.shafts[0].draw(drawer, pt_s1, (0, -1))
         self.shafts[1].draw(drawer, pt_s2, (0, -1))
         self.shafts[2].draw(drawer, pt_s3, (0, -1))

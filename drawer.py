@@ -53,7 +53,7 @@ def to_xyz(seq):
         return seq
     if length == 2:
         return (*seq, 0)
-    raise ValueError(f"无效的序列长度。预期2、3或4个元素。收到: {seq}")
+    raise ValueError(f"无效的序列长度。预期2、3或4个元素。收到: {seq}.length={length}")
 
 
 def to_vec(*seqs, flatten=True, dim=4, return_split=False):
@@ -448,6 +448,18 @@ class Drawer:
         pts = aDouble((*pt1, 0, *pt2, 0))
         return self.view.AddSpline(pts, startTang, endTang)
 
+    def text(self, pt, text, height=5, is_center=True):
+        # txt = msp.AddText('你好', aPoint(0, 0), 5)
+        # txt.TextStyle = '汉字'
+        pt = self._transformed_points(pt)
+        x, y, z = to_xyz(pt)
+        if is_center:
+            x = x - len(text) * height / (2 * 1.414)
+            y = y - height / 2 + 0.5
+        pt = aPoint(x, y, z)
+        txt = self.view.AddText(text, pt, height)
+        return txt
+
     def update(self):
         self.doc.Regen(0)
 
@@ -465,7 +477,8 @@ class Arc2D:
 
     def to_pts(self, num=10):
         angles = np.deg2rad(np.linspace(self.a1, self.a2, num=num))
-        points = self.r * np.vstack((np.cos(angles), np.sin(angles))).T + self.c
+        points = self.r * \
+            np.vstack((np.cos(angles), np.sin(angles))).T + self.c
         return points.tolist()
 
     def draw(self, drawer: Drawer):
@@ -486,7 +499,7 @@ class Path2D:
     def __str__(self):
         fmt_pts = ' -> '.join([f'({p[0]: .2f}, {p[1]: .2f})' for p in self.points])
         return f'{fmt_pts}'
-    
+
     def offset(self, x_or_seq, y=None):
         off = None
         if y is not None:
@@ -495,7 +508,7 @@ class Path2D:
             if len(x_or_seq) < 2:
                 raise ValueError('offset维数不对')
             off = np.array(x_or_seq)
-            
+
         if self.temp_pos is None:
             self.points.append(self.points[-1] + off)
             return self.points[-1]

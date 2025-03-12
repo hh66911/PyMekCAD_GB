@@ -39,7 +39,7 @@ deg = [int(dms[0]) + int(dms[1]) / 60 + float(dms[2]) / 3600 for dms in beta]
 deg = [parts.Angle(d) for d in deg]
 bold = get_data('齿宽').astype(np.int32)
 
-d_holes = [30, 34, 40, 55]
+d_holes = [30, 34, 40, 60]
 gears: list[parts.Gear] = []
 for m, z, b, a, dh in zip(module, teeth, bold, deg, d_holes):
     if float(a) > 0:
@@ -54,11 +54,12 @@ gears[1].rotation = parts.GearRotation.COUTER_CLOCKWISE
 
 d_holes = np.array([25, 30, 55]) // 5
 print(d_holes.astype(np.int32))
-bearings = []
-for d in d_holes:
-    bearings.append(
-        parts.Bearing(f'70{int(d):02d}AC')
-    )
+bearings = [
+    parts.Bearing(f'70{d_holes[0]:02d}AC'),
+    parts.Bearing(f'70{d_holes[1]:02d}AC'),
+    parts.Bearing(f'60{d_holes[2]:02d}AC')
+]
+
 
 box = parts.Box(gears, bearings)
 
