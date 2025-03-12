@@ -463,10 +463,10 @@ class Arc2D:
             np.sin(np.deg2rad(self.a2))
         ))
 
-    def to_pts(self, num=100):
-        angles = np.linspace(self.a1, self.a2, num=num)
-        points = np.vstack((np.cos(angles), np.sin(angles))).T + self.c
-        return points
+    def to_pts(self, num=10):
+        angles = np.deg2rad(np.linspace(self.a1, self.a2, num=num))
+        points = self.r * np.vstack((np.cos(angles), np.sin(angles))).T + self.c
+        return points.tolist()
 
     def draw(self, drawer: Drawer):
         return drawer.arc(self.c, self.r,
@@ -546,9 +546,9 @@ class Path2D:
 
     def wipeout(self, drawer: Drawer):
         points = sum((
-            p.to_pts() if isinstance(p, Arc2D) else (p,)
+            p.to_pts() if isinstance(p, Arc2D) else [p]
             for p in self.points
-        ), start=())
+        ), start=[])
         return drawer.wipeout(*points)
 
     def arc(self, r, angle, is_left=True, tang=None):

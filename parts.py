@@ -340,7 +340,7 @@ class BearingCover:
               6, 6, 6, 6, 6, 6, 6, 6, 6]
     }
 
-    def __init__(self, da, dd, m):
+    def __init__(self, da, dd, m, is_open=False):
         D = da
         if D in self.BEARING_BASE['D']:
             idx = self.BEARING_BASE['D'].index(D)
@@ -353,12 +353,15 @@ class BearingCover:
         self.n = self.BEARING_BASE['n'][idx]
         self.d0 = self.d3 + 1
         self.D4 = D - 10
-        self.e = 1.2 * self.d3
-        self.e1 = self.e + 0.2
+        self.e___ = 1.2 * self.d3
+        self.e = self.e___ + 1
+        self.e1 = self.e___ + 0.2
         self.D = D
+        self.m__ = m + 1
         self.m = m
 
         self.cr = 1
+        self.is_open = is_open
 
         d = [15, 20, 25, 30, 35, 40, 45, 50, 55, 60,
              65, 70, 75, 80, 85, 90, 95, 100, 105, 110]
@@ -391,44 +394,86 @@ class BearingCover:
         self.yoff1 = self.yoff - (self.B - self.b)
         self.yoff3 = (self.yoff - self.yoff1) / 2 + self.yoff2
         self.ccc = self.yoff1 + (self.yoff - self.yoff1) / 2
-
-    def draw(self, drawer: Drawer,
-             center, direction):
-        theta = np.arctan2(direction[1], direction[0]) - np.pi / 2
+        
+    def _draw_close(self, drawer: Drawer):
         drawer.switch_layer(LayerType.SOLID)
-
-        with drawer.transformed(center, theta):
-            path = Path2D((-self.D0 / 2 + self.d0 * 1.5, self.e))
-            path.goto(-self.D2 / 2 + self.cr, self.e)
+        e = self.e___
+        with drawer.transformed((0, 1)):
+            path = Path2D((0, e))
+            path.goto(-self.D2 / 2 + self.cr, e)
             path.offset(-self.cr, -self.cr)
-            path.offset(0, -self.e + self.cr)
+            path.offset(0, -e + self.cr)
             path.goto(-self.D / 2 + self.cr, 0)
             path.offset(0, -self.cr)
             path.offset(-self.cr, 0)
             path.offset(0, -self.e1 + self.cr)
             path.goto(-self.D / 2, -self.e1)
             path.offset(self.cr, 0)
-            path.offset(0, -self.m + self.e1)
+            path.offset(0, -self.m__ + self.e1)
             path.offset((self.D - self.D4) / 2 - self.cr, 0)
-            path.goto(-self.D4 / 2 + 2, self.e - self.b1)
-            path.goto(-self.d1 / 2, self.e - self.b1)
-            path.offset(0, self.yoff)
-            path.offset((self.d1 - self.D1) / 2, self.yoff2)
-            path.offset(0, self.b0)
-            path.offset((self.D1 - self.d1) / 2, self.yoff2)
-            path.offset(0, self.yoff)
-            path.offset((self.d1 - self.D1) / 2, self.yoff2)
-            path.offset(0, self.b0)
-            path.offset((self.D1 - self.d1) / 2, self.yoff2)
-            path.offset(0, self.yoff)
-            path.goto(-self.D0 / 2 + self.d0 * 1.5, self.e - self.cr)
-            path.offset(0, self.cr)
+            path.goto(-self.D4 / 2 + 2, e - self.b1)
+            path.goto(0, e - self.b1)
+            drawer.switch_layer(LayerType.SOLID)
+            path.wipeout(drawer)
             left = path.draw(drawer)
+            with drawer.transformed(mirrored_axis='y'):
+                path.wipeout(drawer)
+                right = path.draw(drawer)
+            drawer.switch_layer(LayerType.THIN)
+            drawer.hatch([left[0], right[0]])
+            
+            drawer.switch_layer(LayerType.SOLID)
+            drawer.hatch(drawer.rect(
+                (-self.D2 / 2, 0),
+                (-self.D / 2 + 1, -1)
+            ), hatch_type=HatchType.SOLID)
+            with drawer.transformed(mirrored_axis='y'):
+                drawer.hatch(drawer.rect(
+                    (-self.D2 / 2, 0),
+                    (-self.D / 2 + 1, -1)
+                ), hatch_type=HatchType.SOLID)
+
+    def _draw_open(self, drawer: Drawer):
+        drawer.switch_layer(LayerType.SOLID)
+        e__ = self.e___
+        with drawer.transformed((0, 1)):
+            path = Path2D((-self.D0 / 2 + self.d0 * 1.5, e__))
+            path.goto(-self.D2 / 2 + self.cr, e__)
+            path.offset(-self.cr, -self.cr)
+            path.offset(0, -e__ + self.cr)
+            path.goto(-self.D / 2 + self.cr, 0)
+            path.offset(0, -self.cr)
+            path.offset(-self.cr, 0)
+            path.offset(0, -self.e1 + self.cr)
+            path.goto(-self.D / 2, -self.e1)
+            path.offset(self.cr, 0)
+            path.offset(0, -self.m__ + self.e1)
+            path.offset((self.D - self.D4) / 2 - self.cr, 0)
+            path.goto(-self.D4 / 2 + 2, e__ - self.b1)
+            path.goto(-self.d1 / 2, e__ - self.b1)
+            path.offset(0, self.yoff)
+            path.offset((self.d1 - self.D1) / 2, self.yoff2)
+            path.offset(0, self.b0)
+            path.offset((self.D1 - self.d1) / 2, self.yoff2)
+            path.offset(0, self.yoff)
+            path.offset((self.d1 - self.D1) / 2, self.yoff2)
+            path.offset(0, self.b0)
+            path.offset((self.D1 - self.d1) / 2, self.yoff2)
+            path.offset(0, self.yoff)
+            path.goto(-self.D0 / 2 + self.d0 * 1.5, e__ - self.cr)
+            path.offset(0, self.cr)
+            drawer.switch_layer(LayerType.SOLID)
+            path.wipeout(drawer)
+            left = path.draw(drawer)
+            drawer.switch_layer(LayerType.THIN)
             drawer.hatch(left)
             with drawer.transformed(mirrored_axis='y'):
+                drawer.switch_layer(LayerType.SOLID)
+                path.wipeout(drawer)
                 right = path.draw(drawer)
+                drawer.switch_layer(LayerType.THIN)
                 drawer.hatch(right)
-            path = Path2D((-self.d / 2, self.e - self.b1 + self.ccc))
+            path = Path2D((-self.d / 2, e__ - self.b1 + self.ccc))
             path.offset((self.d - self.D1) / 2, self.yoff3)
             path.offset(0, self.b0)
             path.offset((self.D1 - self.d) / 2, self.yoff3)
@@ -436,43 +481,65 @@ class BearingCover:
             path.offset((self.d - self.D1) / 2, self.yoff3)
             path.offset(0, self.b0)
             path.offset((self.D1 - self.d) / 2, self.yoff3)
-            path.goto((-self.d / 2, self.e - self.b1 + self.ccc))
+            path.goto((-self.d / 2, e__ - self.b1 + self.ccc))
             maozan = path.wipeout(drawer)
+            drawer.switch_layer(LayerType.SOLID)
             maozan = path.draw(drawer)
             drawer.hatch(maozan, hatch_type=HatchType.RUBBER)
-            drawer.line((-self.D0 / 2 + self.d0 * 1.5, self.e),
-                        (-self.d / 2, self.e))
-            drawer.line((-self.D0 / 2 + self.d0 * 1.5, self.e - self.cr),
-                        (-self.d / 2, self.e - self.cr))
-            drawer.line((-self.d1 / 2, self.e - self.b1),
-                        (-self.d / 2, self.e - self.b1))
+            drawer.line((-self.D0 / 2 + self.d0 * 1.5, e__),
+                        (-self.d / 2, e__))
+            drawer.line((-self.D0 / 2 + self.d0 * 1.5, e__ - self.cr),
+                        (-self.d / 2, e__ - self.cr))
+            drawer.line((-self.d1 / 2, e__ - self.b1),
+                        (-self.d / 2, e__ - self.b1))
             with drawer.transformed(mirrored_axis='y'):
-                drawer.line((-self.D0 / 2 + self.d0 * 1.5, self.e),
-                            (-self.d / 2, self.e))
-                drawer.line((-self.D0 / 2 + self.d0 * 1.5, self.e - self.cr),
-                            (-self.d / 2, self.e - self.cr))
-                drawer.line((-self.d1 / 2, self.e - self.b1),
-                            (-self.d / 2, self.e - self.b1))
+                drawer.line((-self.D0 / 2 + self.d0 * 1.5, e__),
+                            (-self.d / 2, e__))
+                drawer.line((-self.D0 / 2 + self.d0 * 1.5, e__ - self.cr),
+                            (-self.d / 2, e__ - self.cr))
+                drawer.line((-self.d1 / 2, e__ - self.b1),
+                            (-self.d / 2, e__ - self.b1))
                 maozan = path.wipeout(drawer)
+                drawer.switch_layer(LayerType.SOLID)
                 maozan = path.draw(drawer)
                 drawer.hatch(maozan, hatch_type=HatchType.RUBBER)
 
-            with drawer.transformed((-self.D0 / 2, 0)):
-                lt = (-self.d0 / 2, self.e)
-                rb = (self.d0 / 2, 0)
-                drawer.wipeout_rect(lt, rb)
-                drawer.rect(lt, rb)
-                drawer.switch_layer(LayerType.DOTTED)
-                drawer.line((0, -3), (0, self.e + 3))
-            drawer.switch_layer(LayerType.SOLID)
-            with drawer.transformed((self.D0 / 2, 0)):
-                lt = (-self.d0 / 2, self.e)
-                rb = (self.d0 / 2, 0)
-                drawer.wipeout_rect(lt, rb)
-                drawer.rect(lt, rb)
-                drawer.switch_layer(LayerType.DOTTED)
-                drawer.line((0, -3), (0, self.e + 3))
+            drawer.hatch(drawer.rect(
+                (-self.D2 / 2, 0),
+                (-self.D / 2 + 1, -1)
+            ), hatch_type=HatchType.SOLID)
+            with drawer.transformed(mirrored_axis='y'):
+                drawer.hatch(drawer.rect(
+                    (-self.D2 / 2, 0),
+                    (-self.D / 2 + 1, -1)
+                ), hatch_type=HatchType.SOLID)
 
+            # with drawer.transformed((-self.D0 / 2, 0)):
+            #     lt = (-self.d0 / 2, e__)
+            #     rb = (self.d0 / 2, 0)
+            #     drawer.wipeout_rect(lt, rb)
+            #     drawer.rect(lt, rb)
+            #     drawer.switch_layer(LayerType.DOTTED)
+            #     drawer.line((0, -3), (0, e__ + 3))
+            # drawer.switch_layer(LayerType.SOLID)
+            # with drawer.transformed((self.D0 / 2, 0)):
+            #     lt = (-self.d0 / 2, e__)
+            #     rb = (self.d0 / 2, 0)
+            #     drawer.wipeout_rect(lt, rb)
+            #     drawer.rect(lt, rb)
+            #     drawer.switch_layer(LayerType.DOTTED)
+            #     drawer.line((0, -3), (0, e__ + 3))
+
+    def draw(self, drawer: Drawer,
+             center, direction):
+        theta = np.arctan2(direction[1], direction[0]) - np.pi / 2
+        drawer.switch_layer(LayerType.SOLID)
+
+        with drawer.transformed(center, theta):
+            if self.is_open:
+                self._draw_open(drawer)
+            else:
+                self._draw_close(drawer)
 
 @dataclass
 class DrawedGear:
@@ -1597,106 +1664,120 @@ class Box:
 
     def gen_shaft1(self, d, m=40):
         shaft1 = Shaft(d)
-        dd = round(0.07 * d + 2)
+        dd = round(0.07 * d + 1)
         b1 = self.bearings[0]
         d2 = round(b1.d + 2 * b1.inner_thick / 3)
-        bc1 = BearingCover(b1.da, d + dd * 2, m)
-
-        shaft1.add_step(36, dd)
-        pos1 = 36 + 10 + bc1.e + bc1.m
-        shaft1.add_step(pos1, diameter=b1.d)
-        s1 = shaft1.add_step(pos1 + b1.b + 20, dd)
-        pos2 = pos1 - bc1.m + self.B
-        pos_bu = pos2 - pos1 - b1.b
-        bu = shaft1.add_bushing(s1, BushingShape(
-            20, d2, pos_bu - 2,
-            False, bc1.D - 2, 5
-        ))
-        shaft1.add_bearing(bu, b1)
-
-        pos4 = self.width + pos2 - self.delta1
-        pos3 = pos4 - self.gears[0].half_bold * 2
-        shaft1.add_step(pos3 - 10, 5)
-        s1 = shaft1.add_step(pos3, diameter=self.gears[0].r_hole * 2)
-        g1 = shaft1.add_gear(s1, self.gears[0],
-                             put_side=PutSide.AFTER)
-        shaft1.add_keyway(g1, 40)
-        shaft1.add_step(pos4 - 2, -dd)
-        s1 = shaft1.add_step(pos4 + self.delta1, diameter=b1.d)
-        shaft1.add_step(pos4 + self.delta1 + 10 + b1.b, 0)
-        bu = shaft1.add_bushing(s1, BushingShape(
-            10, d2, 5,
-            False, bc1.D, 5
-        ), PutSide.AFTER, forward=False)
-        shaft1.add_bearing(bu, b1, False,
-                           PutSide.AFTER)
-        m2 = self.width + self.B - pos4 + pos2
-        bc12 = BearingCover(b1.da, d, m2)
-        self.bearing_covers[0] = (bc1, bc12)
+        bc1 = BearingCover(b1.da, d + dd * 2, m, True)
+        
+        pos1 = 38 + 10
+        pos2 = pos1 + bc1.e
+        pos3 = pos2 + 20
+        pos4 = pos3 + b1.b
+        pos4_5 = pos2 + self.B
+        pos5 = pos4_5 + 10
+        # print(pos2, pos4_5)
+        L = 410
+        m2 = 435 - L + bc1.e
+        bc12 = BearingCover(b1.da, b1.d, m2, False)
+        pos11 = L
+        pos10 = pos11 - b1.b
+        pos9 = pos11 + m2 - self.B
+        pos8 = pos9 - self.delta1
+        pos7 = pos8 - self.gears[0].half_bold * 2
+        pos6 = pos7 - 10
+        # print(m2, pos8, pos9, pos10, pos11, L)
+        
+        shaft1.add_step(38, diameter=bc1.d1)
+        shaft1.add_step(pos3, diameter=b1.d)
+        st = shaft1.add_step(pos5, dd)
+        sh = shaft1.add_shoulder(pos6, 10, 10)
+        g = shaft1.add_gear(
+            sh, self.gears[0], put_side=PutSide.AFTER)
+        shaft1.add_keyway(g, 80)
+        shaft1.add_step(pos8 - 2, -dd)
+        shaft1.add_step(pos11 - 1, 0)
+        
+        bu1 = shaft1.add_bushing(st, BushingShape(
+            pos5 - pos4, b1.d + dd * 2, pos4_5 - 5,
+            True, bc1.D, 5
+        ), PutSide.BEFORE)
+        shaft1.add_bearing(bu1, b1, False)
+        
+        bu2 = shaft1.add_bushing(g, BushingShape(
+            pos9 - pos8 - 3, b1.d + dd * 2,
+            pos8, True, bc1.D,
+            5
+        ), PutSide.AFTER)
+        bu3 = shaft1.add_bushing(bu2, BushingShape(
+            pos10 - pos9 + 3, b1.d + dd * 2, pos9 - 2,
+            True, bc1.D, 5
+        ), PutSide.AFTER)
+        shaft1.add_bearing(bu3, b1, True, PutSide.AFTER)
         
         self.shafts[0] = shaft1
-        self.syoffs[0] = 36 + 10 + bc1.e
+        self.bearing_covers[0] = (bc1, bc12)
+        self.syoffs[0] = -(38 + 10 + bc1.e)
         return shaft1
 
-    def gen_shaft2(self, d):
-        dd = round(0.1 * d + 2)
-        b2 = self.bearings[1]
+    def gen_shaft2(self, d, m = 30):
         shaft2 = Shaft(d)
-
-        m = 30
+        dd = round(0.07 * d + 1)
+        b2 = self.bearings[1]
+        d2 = round(b2.d + 2 * b2.inner_thick / 3)
         bc2 = BearingCover(b2.da, b2.d, m)
-
-        pos1_ = m + b2.b
-        pos2 = self.B - pos1_
-        bs = BushingShape(20, d + dd, pos2 - 2,
-                          True, bc2.D, 5)
-
-        pos3 = b2.b + 20
-        g1 = self.gears[1]
-        pos4 = pos3 + g1.half_bold * 2
-        sh = shaft2.add_shoulder(pos4, 10, self.delta1)
-        shaft2.add_step(pos3 + 2, dd)
-        g1 = shaft2.add_gear(sh, g1)
-        shaft2.add_keyway(g1, 40)
-        g2 = self.gears[2]
-        sh = shaft2.add_step(pos4 + self.delta1, diameter=g2.r_hole * 2)
-        g2 = shaft2.add_gear(sh, g2, False, PutSide.AFTER)
-        shaft2.add_keyway(g2, 40)
-        bu = shaft2.add_bushing(g1, bs)
-        shaft2.add_bearing(bu, b2)
-
-        pos5 = pos4 + self.delta1 + self.gears[2].half_bold * 2
+        print(b2.d)
+        
+        g2 = self.gears[1]
+        g3 = self.gears[2]
+        lenbu = 20
+        pos0 = -bc2.m
+        pos2 = pos0 + self.B
+        pos3 = pos2 + self.delta1
+        pos4 = pos3 + g3.half_bold * 2
+        pos5 = pos4 + self.delta1 + g2.half_bold * 2
+        pos6 = pos5 + self.delta1
+        pos7 = pos5 + lenbu
+        
+        shaft2.add_step(pos3 + 2, diameter=g3.r_hole * 2)
+        s1 = shaft2.add_step(pos4, 10)
+        s2 = shaft2.add_step(pos4 + self.delta1 - 3, diameter=g2.r_hole * 2)
         shaft2.add_step(pos5 - 2, diameter=b2.d)
-
-        m2 = m + 10
-        pos6 = pos5 + self.delta1 + self.B - m2 - b2.b
-        bs = BushingShape(
-            10, dd + d, 5,
-            False, g2.gear.r_hole * 2 + 5, 5
-        )
-        bu = shaft2.add_bushing(g2, bs, PutSide.AFTER, False)
-        bs = BushingShape(
-            pos6 - pos5 - 10, dd + d, pos6 - pos5 - self.delta1 - 2,
-            False, bc2.D, 5
-        )
-        bu = shaft2.add_bushing(bu, bs, PutSide.AFTER, False)
-        shaft2.add_bearing(bu, b2, False, PutSide.AFTER)
-        shaft2.add_step(pos6 + b2.b - 1, 0)
-
-        bc22 = BearingCover(b2.da, b2.d, m2)
-        self.bearing_covers[1] = (bc2, bc22)
-
+        shaft2.add_step(pos7 + b2.b - 1, 0)
+        g2 = shaft2.add_gear(s2, g2, put_side=PutSide.AFTER)
+        g3 = shaft2.add_gear(s1, g3, put_side=PutSide.BEFORE)
+        shaft2.add_keyway(g2, 90)
+        shaft2.add_keyway(g3, 90)
+        
+        bu1 = shaft2.add_bushing(g3, BushingShape(
+            pos3 - b2.b, d2, pos2 - 2,
+            True, bc2.D, 5
+        ))
+        bu2 = shaft2.add_bushing(g2, BushingShape(
+            (pos7 - pos5) / 2 + 1, d2, pos5 - 3,
+            True, g2.gear.r_hole * 2 + 4, 5
+        ), PutSide.AFTER, True)
+        bu3 = shaft2.add_bushing(bu2, BushingShape(
+            (pos7 - pos5) / 2 + 2, d2, pos6 - 2,
+            True, bc2.D, 5
+        ), PutSide.AFTER, True)
+        shaft2.add_bearing(bu1, b2, False)
+        shaft2.add_bearing(bu3, b2, put_side=PutSide.AFTER)
+        m2 = self.B * 2 + self.width - m - pos7 - b2.b
+        print(pos5)
+        bc21 = BearingCover(b2.da, b2.d, m2)
+        
         self.shafts[1] = shaft2
-        self.syoffs[1] = -bc2.m
+        self.bearing_covers[1] = (bc2, bc21)
+        self.syoffs[1] = bc2.m
         return shaft2
-    
+
     def gen_shaft3(self, d):
         dd = round(0.07 * d + 1)
         b3 = self.bearings[2]
         m = 30
         bc3 = BearingCover(b3.da, b3.d, m)
         shaft3 = Shaft(d)
-        
+
         pos0 = 82 + 10 + bc3.e
         pos1 = pos0 + bc3.m
         pos2 = pos0 + self.B
@@ -1708,7 +1789,7 @@ class Box:
         bc31 = BearingCover(b3.da, b3.d, m2)
         pos_2 = pos_1 - bc31.m
         pos_3 = pos_2 - b3.b
-        
+
         d2 = round(b3.inner_thick / 2) * 2 + b3.d
         shaft3.add_step(82, dd)
         shaft3.add_step(pos1, diameter=b3.d)
@@ -1728,7 +1809,7 @@ class Box:
         ))
         shaft3.add_bearing(bu, self.bearings[2])
         shaft3.add_step(pos4 + 10, diameter=b3.d + dd * 2)
-        
+
         s4 = shaft3.add_step(pos_3 - 20, -dd)
         bu = shaft3.add_bushing(s4, BushingShape(
             20, d2, pos5 - 2,
@@ -1736,12 +1817,11 @@ class Box:
         ), PutSide.AFTER)
         shaft3.add_bearing(bu, b3, True, PutSide.AFTER)
         shaft3.add_step(pos_2, 0)
-        
+
         self.shafts[2] = shaft3
-        self.syoffs[2] = 82 + 10 + bc3.e
+        self.syoffs[2] = -(82 + 10 + bc3.e)
         self.bearing_covers[2] = (bc3, bc31)
         return shaft3
-        
 
     def _draw_bottom_layer0_half(self, drawer: Drawer):
         halfl = self.length / 2
@@ -1794,58 +1874,107 @@ class Box:
                 path.draw(drawer)
 
     def _draw_bottom_layer1(self, drawer: Drawer):
-        path = Path2D((-self.length / 2, 0))
-        path.offset(0, -self.width / 2 + self.r1)
-        path.arc(self.r1, 90)
-        path.offset(self.length - self.r1 * 2, 0)
-        path.arc(self.r1, 90)
-        path.offset(0, self.width / 2 - self.r1)
-        path.draw(drawer)
-
         g1, g2, g3, g4 = self.gears
         bc1, bc2, bc3 = self.bearing_covers
-        # print(bc1[0].D, bc2[0].D, bc3[0].D)
-        
+
         path = Path2D((-self.length / 2 - self.l1, 0))
         path.offset(0, -self.width / 2)
         path.arc(self.l1, 90)
         pt1 = np.array((
             -self.length / 2 + self.delta + g1.ra,
             -self.width / 2 - self.l1
-            ))
-        path.goto(pt1 - (bc1[0].D / 2 + self.b1, 0) - (self.b1, 0))
+        ))
+        path.goto(pt1 - (bc1[0].D2 / 2 + self.b1, 0) - (self.b1, 0))
         path.arc(1, 90, False)
         path.arc(self.b1 - 1, 90, tang=(0, -1))
         path.offset(self.b1 / 2, 0)
-        pt_s1 = path.offset(bc1[0].D, 0)
-        pt_s1 = pt_s1 - (bc1[0].D / 2, 0)
+        pt_s1 = path.offset(bc1[0].D2, 0)
+        pt_s1 = pt_s1 - (bc1[0].D2 / 2, 0)
         path.offset(self.b1 / 2, 0)
         path.arc(self.b1 - 1, 90)
         path.arc(1, 90, False, (0, 1))
         # print(path.points)
-        
-        path.offset(self.aI - bc2[0].D / 2 - bc1[0].D / 2 - self.b1 * 3, 0)
+
+        path.offset(self.aI - bc2[0].D2 / 2 - bc1[0].D2 / 2 - self.b1 * 3, 0)
         path.arc(1, 90, False)
         path.arc(self.b1 - 1, 90, tang=(0, -1))
         path.offset(self.b1 / 2, 0)
-        pt_s2 = path.offset(bc2[0].D, 0)
-        pt_s2 = pt_s2 - (bc2[0].D / 2, 0)
+        pt_s2 = path.offset(bc2[0].D2, 0)
+        pt_s2 = pt_s2 - (bc2[0].D2 / 2, 0)
         path.offset(self.b1 / 2, 0)
         path.arc(self.b1 - 1, 90)
         path.arc(1, 90, False, (0, 1))
-        print(pt_s2 - pt_s1)
-        
+
+        path.offset(self.aII - bc3[0].D2 / 2 - bc2[0].D2 / 2 - self.b1 * 3, 0)
+        path.arc(1, 90, False)
+        path.arc(self.b1 - 1, 90, tang=(0, -1))
+        path.offset(self.b1 / 2, 0)
+        pt_s3 = path.offset(bc3[0].D2, 0)
+        pt_s3 = pt_s3 - (bc3[0].D2 / 2, 0)
+        path.offset(self.b1 / 2, 0)
+        path.arc(self.b1 - 1, 90)
+        path.arc(1, 90, False, (0, 1))
+
+        path.goto(self.length / 2, -self.width / 2 - self.l1)
+        path.arc(self.l1, 90)
+
+        path.goto(self.length / 2 + self.l1, 0)
+
+        path.goto(-self.length / 2 - self.l1, 0)
+        path.wipeout(drawer)
+        with drawer.transformed(mirrored_axis='x'):
+            path.wipeout(drawer)
+        path.points.pop()
         path.draw(drawer)
+        with drawer.transformed(mirrored_axis='x'):
+            path.draw(drawer)
+
+        path = Path2D((-self.length / 2, 0))
+        path.offset(0, -self.width / 2 + self.c2)
+        path.arc(self.c2, 90)
+        path.offset(self.length - self.c2 * 2, 0)
+        path.arc(self.c2, 90)
+        path.offset(0, self.width / 2 - self.c2)
+        path.draw(drawer)
+        with drawer.transformed(mirrored_axis='x'):
+            path.draw(drawer)
+
+        def draw_doubleline(pos, width, len):
+            pt1 = np.array((pos[0] - width / 2, 0))
+            pt2 = np.array((pos[0] + width / 2, 0))
+            drawer.line(pt1, pt1 + (0, len))
+            drawer.line(pt2, pt2 + (0, len))
+
+        pt_ss = [pt_s1, pt_s2, pt_s3]
+        for pt_s, bc in zip(pt_ss, [bc1[0], bc2[0], bc3[0]]):
+            with drawer.transformed(pt_s):
+                bc.draw(drawer, (0, 0), (0, -1))
+                drawer.switch_layer(LayerType.SOLID)
+                draw_doubleline((0, 0), bc.D, self.B)
+        with drawer.transformed(mirrored_axis='x'):
+            for pt_s, bc in zip(pt_ss, [bc1[1], bc2[1], bc3[1]]):
+                with drawer.transformed(pt_s):
+                    bc.draw(drawer, (0, 0), (0, -1))
+                    drawer.switch_layer(LayerType.SOLID)
+                    draw_doubleline((0, 0), bc.D, self.B)
+
+        pt_s1  = pt_s1 + (0, self.syoffs[0])
+        pt_s2  = pt_s2 + (0, self.syoffs[1])
+        pt_s3  = pt_s3 + (0, self.syoffs[2])
+        self.shafts[0].draw(drawer, pt_s1, (0, -1))
+        self.shafts[1].draw(drawer, pt_s2, (0, -1))
+        self.shafts[2].draw(drawer, pt_s3, (0, 1))
 
     def draw(self, drawer: Drawer, view: ViewPort,
              center: ndarray, dire: ndarray):
         theta = np.arctan2(dire[1], dire[0]) - np.pi / 2
         if view == ViewPort.TOP2BOTTOM:
-            # with drawer.transformed(center, theta):
-            #     self._draw_bottom_layer0(drawer)
-            #     with drawer.transformed(mirrored_axis='x'):
-            #         self._draw_bottom_layer0(drawer)
             with drawer.transformed(center, theta):
-                self._draw_bottom_layer1(drawer)
+                drawer.switch_layer(LayerType.SOLID)
+                self._draw_bottom_layer0(drawer)
                 with drawer.transformed(mirrored_axis='x'):
-                    self._draw_bottom_layer1(drawer)
+                    drawer.switch_layer(LayerType.SOLID)
+                    self._draw_bottom_layer0(drawer)
+            with drawer.transformed(center, theta):
+                drawer.switch_layer(LayerType.SOLID)
+                self._draw_bottom_layer1(drawer)
