@@ -354,10 +354,11 @@ class BearingCover:
         self.d0 = self.d3 + 1
         self.D4 = D - 10
         self.e___ = 1.2 * self.d3
-        self.e = self.e___ + 1
+        self.e = round(self.e___ + 0.5)
+        self.h_in = self.e - self.e___
         self.e1 = self.e___ + 0.2
         self.D = D
-        self.m__ = m + 1
+        self.m__ = m + self.h_in
         self.m = m
 
         self.cr = 1
@@ -395,10 +396,12 @@ class BearingCover:
         self.yoff3 = (self.yoff - self.yoff1) / 2 + self.yoff2
         self.ccc = self.yoff1 + (self.yoff - self.yoff1) / 2
         
+        self.head = BoltHead(self.d3)
+        
     def _draw_close(self, drawer: Drawer):
         drawer.switch_layer(LayerType.SOLID)
         e = self.e___
-        with drawer.transformed((0, 1)):
+        with drawer.transformed((0, self.h_in)):
             path = Path2D((0, e))
             path.goto(-self.D2 / 2 + self.cr, e)
             path.offset(-self.cr, -self.cr)
@@ -425,18 +428,18 @@ class BearingCover:
             drawer.switch_layer(LayerType.SOLID)
             drawer.hatch(drawer.rect(
                 (-self.D2 / 2, 0),
-                (-self.D / 2 + 1, -1)
+                (-self.D / 2 + 1, -self.h_in)
             ), hatch_type=HatchType.SOLID)
             with drawer.transformed(mirrored_axis='y'):
                 drawer.hatch(drawer.rect(
                     (-self.D2 / 2, 0),
-                    (-self.D / 2 + 1, -1)
+                    (-self.D / 2 + 1, -self.h_in)
                 ), hatch_type=HatchType.SOLID)
 
     def _draw_open(self, drawer: Drawer):
         drawer.switch_layer(LayerType.SOLID)
         e__ = self.e___
-        with drawer.transformed((0, 1)):
+        with drawer.transformed((0, self.h_in)):
             path = Path2D((-self.D0 / 2 + self.d0 * 1.5, e__))
             path.goto(-self.D2 / 2 + self.cr, e__)
             path.offset(-self.cr, -self.cr)
@@ -506,29 +509,13 @@ class BearingCover:
 
             drawer.hatch(drawer.rect(
                 (-self.D2 / 2, 0),
-                (-self.D / 2 + 1, -1)
+                (-self.D / 2 + 1, -self.h_in)
             ), hatch_type=HatchType.SOLID)
             with drawer.transformed(mirrored_axis='y'):
                 drawer.hatch(drawer.rect(
                     (-self.D2 / 2, 0),
-                    (-self.D / 2 + 1, -1)
+                    (-self.D / 2 + 1, -self.h_in)
                 ), hatch_type=HatchType.SOLID)
-
-            # with drawer.transformed((-self.D0 / 2, 0)):
-            #     lt = (-self.d0 / 2, e__)
-            #     rb = (self.d0 / 2, 0)
-            #     drawer.wipeout_rect(lt, rb)
-            #     drawer.rect(lt, rb)
-            #     drawer.switch_layer(LayerType.DOTTED)
-            #     drawer.line((0, -3), (0, e__ + 3))
-            # drawer.switch_layer(LayerType.SOLID)
-            # with drawer.transformed((self.D0 / 2, 0)):
-            #     lt = (-self.d0 / 2, e__)
-            #     rb = (self.d0 / 2, 0)
-            #     drawer.wipeout_rect(lt, rb)
-            #     drawer.rect(lt, rb)
-            #     drawer.switch_layer(LayerType.DOTTED)
-            #     drawer.line((0, -3), (0, e__ + 3))
 
     def draw(self, drawer: Drawer,
              center, direction):
@@ -540,6 +527,14 @@ class BearingCover:
                 self._draw_open(drawer)
             else:
                 self._draw_close(drawer)
+            e = self.e___ + 1
+            if self.n == 4:
+                self.head.draw(drawer, (-self.D0 / 2 * np.cos(np.pi / 4), e), (0, 1))
+                self.head.draw(drawer, (self.D0 / 2 * np.cos(np.pi / 4), e), (0, 1))
+            elif self.n == 6:
+                self.head.draw(drawer, (-self.D0 / 2 * np.cos(np.pi / 6), e), (0, 1))
+                self.head.draw(drawer, (self.D0 / 2 * np.cos(np.pi / 6), e), (0, 1))
+                self.head.draw(drawer, (0, e), (0, 1))
 
 @dataclass
 class DrawedGear:
@@ -1312,6 +1307,9 @@ class Shaft:
                 keyway.draw(
                     drawer, (pos, 0),
                     (-1, 0) if forward else (1, 0), bold)
+                
+            drawer.switch_layer(LayerType.DOTTED)
+            drawer.line((-5, 0), (self.length + 5, 0))
 
 
 class BoltHead:
@@ -1401,9 +1399,12 @@ class BoltHead:
             lt = (-self.e / 2, self.k)
             rb = (self.e / 2, 0)
             drawer.wipeout_rect(lt, rb)
+            drawer.switch_layer(LayerType.SOLID)
             drawer.rect(lt, rb)
             drawer.line((-self.e / 4, 0), (-self.e / 4, self.k))
             drawer.line((self.e / 4, 0), (self.e / 4, self.k))
+            drawer.switch_layer(LayerType.DOTTED)
+            drawer.line((0, self.k + 3), (0, self.k - 2 * self.d))
 
     def draw_top(self, drawer: Drawer,
                  center: ndarray, direction: ndarray):
@@ -1558,6 +1559,64 @@ class Box:
     H_PLUS_SCALE: tuple = (30, 50)
     L1_PLUS_SCALE: tuple = (5, 10)
 
+    def to_latex(self):
+        latex = r"""
+\begin{table}[h]
+\centering
+\caption{减速器箱体参数表}
+\begin{tabular}{|l|l|l|l|}
+\hline
+\textbf{参数类别} & \textbf{符号} & \textbf{数值} & \textbf{单位} \\ \hline
+"""
+        # 基本参数
+        latex += r"\multicolumn{4}{|c|}{\textbf{基本参数}} \\ \hline" + "\n"
+        latex += f"比例系数 & scale & {self.scale:.2f} & - \\\\ \hline\n"
+        latex += f"高速级中心距 & aI & {self.aI:.1f} & mm \\\\ \hline\n"
+        latex += f"低速级中心距 & aII & {self.aII:.1f} & mm \\\\ \hline\n"
+
+        # 尺寸参数
+        latex += r"\multicolumn{4}{|c|}{\textbf{尺寸参数}} \\ \hline" + "\n"
+        latex += f"底座壁厚 & $\delta$ & {self.b} & mm \\\\ \hline\n"
+        latex += f"箱体壁厚 & $\delta_1$ & {self.b1} & mm \\\\ \hline\n"
+        latex += f"上部凸缘厚度 & $h_0$ & {self.h0} & mm \\\\ \hline\n"
+        latex += f"箱盖凸缘厚度 & $h_1$ & {self.h1} & mm \\\\ \hline\n"
+        latex += f"下部凸缘厚度 & $h_2$ & {self.h2} & mm \\\\ \hline\n"
+        latex += f"加强筋厚度 & e & {self.e} & mm \\\\ \hline\n"
+        latex += f"箱盖加强筋厚度 & $e_1$ & {self.e1} & mm \\\\ \hline\n"
+
+        # 螺栓相关参数
+        latex += r"\multicolumn{4}{|c|}{\textbf{螺栓参数}} \\ \hline" + "\n"
+        latex += f"地脚螺栓数目 & $n_f$ & {self.n_feet} & - \\\\ \hline\n"
+        latex += f"地脚螺栓直径 & d & {self.d_feet} & mm \\\\ \hline\n"
+        latex += f"轴承座螺栓直径 & $d_2$ & {self.d2} & mm \\\\ \hline\n"
+        latex += f"连接螺栓直径 & $d_3$ & {self.d3} & mm \\\\ \hline\n"
+        latex += f"视孔盖螺栓直径 & $d_5$ & {self.d5} & mm \\\\ \hline\n"
+        latex += f"吊环螺栓直径 & $d_6$ & {self.d6} & mm \\\\ \hline\n"
+
+        # 铸造相关参数
+        latex += r"\multicolumn{4}{|c|}{\textbf{铸造参数}} \\ \hline" + "\n"
+        latex += f"铸造圆角X & X & {self.X} & mm \\\\ \hline\n"
+        latex += f"铸造圆角Y & Y & {self.Y} & mm \\\\ \hline\n"
+        latex += f"铸造圆角R & R & {self.R} & mm \\\\ \hline\n"
+
+        # 间隙与深度
+        latex += r"\multicolumn{4}{|c|}{\textbf{间隙与深度}} \\ \hline" + "\n"
+        latex += f"齿顶间隙 & $\Delta$ & {self.delta} & mm \\\\ \hline\n"
+        latex += f"端面间隙 & $\Delta_1$ & {self.delta1} & mm \\\\ \hline\n"
+        latex += f"底座深度 & H & {self.H} & mm \\\\ \hline\n"
+        latex += f"底座高度 & $H_1$ & {self.H1} & mm \\\\ \hline\n"
+
+        # 其他参数
+        latex += r"\multicolumn{4}{|c|}{\textbf{其他参数}} \\ \hline" + "\n"
+        latex += f"圆角半径r1 & $r_1$ & {self.r1} & mm \\\\ \hline\n"
+        latex += f"圆角半径r2 & $r_2$ & {self.r2} & mm \\\\ \hline\n"
+        latex += f"总长度 & L & {self.length:.1f} & mm \\\\ \hline\n"
+        latex += f"总宽度 & B & {self.width:.1f} & mm \\\\ \hline\n"
+
+        latex += r"""\end{tabular}
+\end{table}"""
+        return latex
+
     def _calc_all_scales(self):
         scale = self.scale
         for attr in Box.__annotations__:
@@ -1689,7 +1748,7 @@ class Box:
         
         shaft1.add_step(38, diameter=bc1.d1)
         shaft1.add_step(pos3, diameter=b1.d)
-        st = shaft1.add_step(pos5, dd)
+        st = shaft1.add_step(pos5, diameter=self.gears[0].r_hole * 2)
         sh = shaft1.add_shoulder(pos6, 10, 10)
         g = shaft1.add_gear(
             sh, self.gears[0], put_side=PutSide.AFTER)
