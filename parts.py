@@ -386,7 +386,7 @@ class BearingCover:
         self.yoff2 = (self.b - self.b0) / 2
         self.b1 = self.cr + self.yoff * 3 + self.yoff2 * 4 + self.b0 * 2
         self.D1 = D0[idx]
-        self.d1 = d0[idx]
+        self.d1 = d1[idx]
 
         self.d = dd
         self.B = (self.D1 - dd) / (
@@ -487,16 +487,16 @@ class BearingCover:
             maozan = path.draw(drawer)
             drawer.hatch(maozan, hatch_type=HatchType.RUBBER)
             drawer.line((-self.D0 / 2 + self.d0 * 1.5, e__),
-                        (-self.d / 2, e__))
+                        (-self.d1 / 2, e__))
             drawer.line((-self.D0 / 2 + self.d0 * 1.5, e__ - self.cr),
-                        (-self.d / 2, e__ - self.cr))
+                        (-self.d1 / 2, e__ - self.cr))
             drawer.line((-self.d1 / 2, e__ - self.b1),
                         (-self.d / 2, e__ - self.b1))
             with drawer.transformed(mirrored_axis='y'):
                 drawer.line((-self.D0 / 2 + self.d0 * 1.5, e__),
-                            (-self.d / 2, e__))
+                            (-self.d1 / 2, e__))
                 drawer.line((-self.D0 / 2 + self.d0 * 1.5, e__ - self.cr),
-                            (-self.d / 2, e__ - self.cr))
+                            (-self.d1 / 2, e__ - self.cr))
                 drawer.line((-self.d1 / 2, e__ - self.b1),
                             (-self.d / 2, e__ - self.b1))
                 maozan = path.wipeout(drawer)
@@ -1741,9 +1741,9 @@ class Box:
         shaft2.add_step(pos3 + 2, diameter=g3.r_hole * 2)
         s1 = shaft2.add_step(pos4, 10)
         s2 = shaft2.add_step(pos4 + self.delta1 - 3, diameter=g2.r_hole * 2)
-        shaft2.add_step(pos5 - 2, diameter=b2.d)
+        shaft2.add_step(pos5 - 5, diameter=b2.d)
         shaft2.add_step(pos7 + b2.b - 1, 0)
-        g2 = shaft2.add_gear(s2, g2, put_side=PutSide.AFTER)
+        g2 = shaft2.add_gear(s2, g2, True, PutSide.AFTER)
         g3 = shaft2.add_gear(s1, g3, put_side=PutSide.BEFORE)
         shaft2.add_keyway(g2, 50)
         shaft2.add_keyway(g3, 50)
@@ -1775,7 +1775,7 @@ class Box:
         self.syoffs[1] = bc2.m
         return shaft2
 
-    def gen_shaft3(self, d, m=40):
+    def gen_shaft3(self, d, m=18):
         shaft3 = Shaft(d)
         dd = round(0.07 * d + 1)
         b3 = self.bearings[2]
@@ -1784,24 +1784,27 @@ class Box:
         
         g = self.gears[-1]
         pos1 = -m + self.B
-        pos2 = pos1 + 20
-        pos3 = self.delta1 + pos1
+        pos2 = pos1 + 6
+        pos3 = self.delta1 + pos1 + 3
         pos4 = pos3 + g.half_bold * 2
         pos6 = -m + self.B + self.width
         pos5 = pos6 - 20
-        m2 = 30
+        m2 = 18
         bc31 = BearingCover(b3.da, b3.d, m2, True)
         pos7 = pos6 + self.B - m2 - b3.b
-        pos8 = pos6 + b3.b
+        pos8 = pos7 + b3.b
         pos9 = pos8 + m2 + bc31.e + 10
     
         shaft3.add_step(pos3 + 2, diameter=g.r_hole * 2)
         s1 = shaft3.add_step(pos4, 10)
         shaft3.add_step(pos4 + self.delta1, diameter=g.r_hole * 2 + 5)
-        st = shaft3.add_step(pos5, diameter=bc31.d1)
-        shaft3.add_step(pos8, diameter=bc31.d0)
-        shaft3.add_step(pos9, diameter=d)
+        st = shaft3.add_step(pos5, diameter=b3.d)
+        shaft3.add_step(pos8, diameter=bc3.d1)
+        shaft3.add_step(pos9, diameter=50)
         shaft3.add_step(pos9 + 82, 0)
+
+        # print(pos7, pos8, pos9)
+        # print(bc31.d1, d, b3.d)
         g = shaft3.add_gear(s1, g, put_side=PutSide.BEFORE)
         shaft3.add_keyway(g, 63)
 
